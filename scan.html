@@ -19,6 +19,7 @@
     .avatar{display:grid;place-items:center;background:#e5e7eb;color:#374151;font-weight:700;font-size:32px}
     .debug{font-size:.85rem;color:#9ca3af;margin-top:8px}
   </style>
+  <!-- Lector de QR -->
   <script src="https://unpkg.com/html5-qrcode" defer></script>
 
   <script type="module">
@@ -29,7 +30,7 @@
       doc, getDoc
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-    // ⚙️ Tu configuración
+    // ⚙️ Tu configuración de Firebase
     const firebaseConfig = {
       apiKey: "AIzaSyAvf7Ioww9AhOVLoGzfi5I5PUwlhLE3gfM",
       authDomain: "holy-trinity-mass-attendance.firebaseapp.com",
@@ -44,7 +45,7 @@
     const analytics = getAnalytics(app);
     const db  = getFirestore(app);
 
-    // intenta cargar una imagen y resuelve con la primera que funcione
+    // Intenta cargar una imagen y resuelve con la primera que funcione
     function tryImageUrls(urls){
       return new Promise((resolve)=>{
         const img = new Image();
@@ -60,9 +61,11 @@
       });
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
+    window.addEventListener('DOMContentLoaded', async () => {
       const teacherEl = document.getElementById('teacher');
       const courseEl  = document.getElementById('course');
+      const frontCamEl = document.getElementById('frontCam');
+
       const startBtn  = document.getElementById('start');
       const stopBtn   = document.getElementById('stop');
       const statusEl  = document.getElementById('status');
@@ -82,18 +85,51 @@
         const teacher = teacherEl.value.trim();
         if(!teacher){ alert('Ingresa tu nombre (profesor/a)'); return; }
         statusEl.textContent = 'Iniciando cámara...';
+
         try{
           html5QrCode = new Html5Qrcode("reader");
-          const devices = await Html5Qrcode.getCameras();
-          const camId = devices?.[0]?.id;
-          if(!camId) throw new Error('No se encontró cámara');
+          const wantFront = frontCamEl.checked;
 
-          await html5QrCode.start(
-            camId,
-            { fps: 10, qrbox: {width: 280, height: 280} },
-            onScanSuccess,
-            () => {}
-          );
+          // 1) Intentar por facingMode (simple)
+          const constraints = { facingMode: wantFront ? "user" : "environment" };
+          try {
+            await html5QrCode.start(
+              constraints,
+              { fps: 10, qrbox: { width: 280, height: 280 } },
+              onScanSuccess,
+              () => {}
+            );
+          } catch (err1) {
+            // 2) Fallback: enumerar cámaras y elegir por nombre
+            const devices = await Html5Qrcode.getCameras();
+            if (!devices?.length) throw new Error('No se encontró cámara');
+
+            // Heurística por etiqueta
+            let deviceId = devices[0].id;
+            if (wantFront) {
+              const front = devices.find(d =>
+                (d.label || '').toLowerCase().includes('front') ||
+                (d.label || '').toLowerCase().includes('face')
+              );
+              if (front) deviceId = front.id;
+              else if (devices.length > 1) deviceId = devices[devices.length - 1].id; // a veces la frontal es la última
+            } else {
+              const rear = devices.find(d =>
+                (d.label || '').toLowerCase().includes('back') ||
+                (d.label || '').toLowerCase().includes('rear') ||
+                (d.label || '').toLowerCase().includes('environment')
+              );
+              if (rear) deviceId = rear.id;
+            }
+
+            await html5QrCode.start(
+              deviceId,
+              { fps: 10, qrbox: { width: 280, height: 280 } },
+              onScanSuccess,
+              () => {}
+            );
+          }
+
           running = true;
           statusEl.textContent = 'Escaneando... apunta al QR del estudiante';
           startBtn.disabled = true;
@@ -116,7 +152,7 @@
 
       async function onScanSuccess(decodedText){
         try{
-          // 1) Decodifica QR
+          // 1) Decodificar QR
           let data; let sid;
           try{ data = JSON.parse(decodedText); }
           catch{ data = { sid: decodedText }; }
@@ -125,12 +161,12 @@
 
           debugEl.textContent = `QR leído: ${decodedText}`;
 
-          // 2) Busca perfil en Firestore
+          // 2) Buscar perfil en Firestore
           let profile = null; let profileMsg = '';
           try{
             const snap = await getDoc(doc(db, "students", sid));
-            if (snap.exists()){ profile = snap.data(); profileMsg = 'Perfil encontrado en students/'+sid; }
-            else { profileMsg = 'No existe students/'+sid; }
+            if (snap.exists()){ profile = snap.data(); profileMsg = 'Perfil: students/'+sid; }
+            else { profileMsg = 'Sin perfil: students/'+sid; }
           }catch(e){
             profileMsg = 'Error leyendo students/'+sid+': '+e.message;
           }
@@ -142,7 +178,7 @@
           const displayOrg  = String(profile?.org || data.org || '').trim();
           let   photoUrl    = String(profile?.photoUrl || data.photoUrl || '').trim();
 
-          // 3) Mostrar foto (o intentar fallback)
+          // 3) Foto (o fallback a /fotos/<sid>.(png|jpg|jpeg))
           let usedFallback = false;
           if (!photoUrl){
             const base = 'https://michaelpg27.github.io/qr-attendance/fotos/';
@@ -165,7 +201,7 @@
             avatarEl.style.display = "grid";
           }
 
-          // 4) Guarda asistencia
+          // 4) Guardar asistencia
           const docRef = await addDoc(collection(db, "attendance"), {
             sid,
             name: displayName || "",
@@ -180,7 +216,7 @@
 Profesor: ${teacher}${course ? " | Curso: "+course : ""}
 DocID: ${docRef.id}`;
           statusEl.innerHTML = `<span class="ok">Asistencia guardada</span>`;
-          debugEl.textContent = `${profileMsg}${usedFallback ? ' | Foto por fallback: '+photoUrl : (photoUrl ? ' | Foto desde profile/QR' : ' | Sin foto disponible')}`;
+          debugEl.textContent = `${profileMsg}${usedFallback ? ' | Foto fallback: '+photoUrl : (photoUrl ? ' | Foto encontrada' : ' | Sin foto')}`;
         }catch(err){
           statusEl.innerHTML = `<span class="err">Error: ${err.message}</span>`;
         }
@@ -205,6 +241,11 @@ DocID: ${docRef.id}`;
           <input id="course" placeholder="Ej. Matemáticas 7°B" />
         </div>
       </div>
+
+      <!-- ✅ Checkbox para usar cámara frontal -->
+      <label style="display:inline-flex;gap:8px;align-items:center;margin:8px 0">
+        <input type="checkbox" id="frontCam"> Usar cámara frontal
+      </label>
 
       <div id="reader" style="width:100%;max-width:420px;aspect-ratio:1/1;border-radius:16px;overflow:hidden;margin:14px auto;background:#000"></div>
       <div style="display:flex;gap:10px;justify-content:center">
