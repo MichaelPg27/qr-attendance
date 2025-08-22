@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Escanear Asistencia</title>
+  <style>
+    body{font-family:system-ui,Arial;margin:24px;background:#f7f7f8;color:#111}
+    .wrap{max-width:760px;margin:auto;display:grid;gap:16px}
+    .card{background:#fff;padding:16px;border-radius:16px;box-shadow:0 10px 25px rgba(0,0,0,.08)}
+    label{display:block;margin:10px 0 6px;font-weight:600}
+    input{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px}
+    button{padding:10px 14px;border:0;border-radius:12px;cursor:pointer;box-shadow:0 6px 15px rgba(0,0,0,.08)}
+    .log{font-family:ui-monospace,Consolas;background:#0b1220;color:#e6edf3;padding:12px;border-radius:12px;white-space:pre-wrap}
+    .ok{color:#4caf50} .err{color:#e53935}
+  </style>
+  <script src="https://unpkg.com/html5-qrcode" defer></script>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
+    import { getFirestore, collection, addDoc, serverTimestamp } 
+      from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    // Your Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyAvf7Ioww9AhOVLoGzfi5I5PUwlhLE3gfM",
+      authDomain: "holy-trinity-mass-attendance.firebaseapp.com",
+      projectId: "holy-trinity-mass-attendance",
+      storageBucket: "holy-trinity-mass-attendance.firebasestorage.app",
+      messagingSenderId: "433652965400",
+      appId: "1:433652965400:web:a5a79fc0c06a64fe6f636d",
+      measurementId: "G-QT30TYNQ83"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    const db  = getFirestore(app);
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const teacherEl = document.getElementById('teacher');
+      const courseEl  = document.getElementById('course');
+      const startBtn  = document.getElementById('start');
+      const stopBtn   = document.getElementById('stop');
+      const statusEl  = document.getElementById('status');
+      const lastEl    = document.getElementById('last');
+      let html5QrCode = null;
+      let running = false;
+
+      async function startScan(){
+        const teacher = teacherEl.value.trim();
+        if(!teacher){ alert('Ingresa tu nombre (profesor/a)'); return; }
+        statusEl.textContent = 'Iniciando cámara...';
+        try{
+          html5QrCode = new Html5Qrcode("reader");
+          const devices = await Html5Qrcode.getCameras();
+          const camId = devices?.[0]?.id;
+          if(!camId) throw new Error('No se encontró cámara');
+
+          await html5QrCode.start(
+            camId,
+            { fps: 10, qrbox: {width: 280, height: 280} },
+            onScanSuccess,
+            () => {}
+          );
+          running = true;
+          statusEl.textContent = 'Escaneando... apunta al QR del estudiante';
+          startBtn.disabled = true;
+          stopBtn.disabled  = false;
+        }catch(err){
+          statusEl.innerHTML = `<span class="err">Error al iniciar: ${err.message}</span>`;
+        }
+      }
+
+      async function stopScan(){
+        if(html5QrCode && running){
+          await html5QrCode.stop();
+          await html5QrCode.clear();
+          running = false;
+          startBtn.disabled = false;
+          stopBtn.disabled  = true;
+          statusEl.textContent = 'Escaneo detenido.';
+        }
+      }
+
+      async function onScanSuccess(decodedText){
+        try{
+          let data;
+          try{ data = JSON.parse(decodedText); }
+          catch{ data = { sid: decodedText.trim(), name: "", org: "" }; }
+
+          if(!data.sid){
+            statusEl.innerHTML = `<span class="err">QR inválido: falta sid</span>`;
+            return;
+          }
+
+          const teacher = teacherEl.value.trim();
+          const course  = courseEl.value.trim();
+
+          const docRef = await addDoc(collection(db, "attendance"), {
+            sid: String(data.sid),
+            name: String(data.name || ""),
+            org: String(data.org || ""),
+            teacher,
+            course,
+            scannedAt: serverTimestamp()
+          });
+
+          lastEl.innerHTML =
+`✔️ Registrado: ${data.name ? data.name+" ("+data.sid+")" : data.sid}
+Profesor: ${teacher}${course ? " | Curso: "+course : ""}
+DocID: ${docRef.id}`;
+          statusEl.innerHTML = `<span class="ok">Asistencia guardada</span>`;
+        }catch(err){
+          statusEl.innerHTML = `<span class="err">Error al guardar: ${err.message}</span>`;
+        }
+      }
+
+      startBtn.addEventListener('click', startScan);
+      stopBtn.addEventListener('click',  stopScan);
+    });
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Escanear Asistencia</h1>
+      <label for="teacher">Nombre del profesor/a</label>
+      <input id="teacher" placeholder="Ej. Prof. Rodríguez" />
+      <label for="course">Asignatura / Grupo (opcional)</label>
+      <input id="course" placeholder="Ej. Matemáticas 7°B" />
+      <div id="reader" style="width:100%;max-width:420px;aspect-ratio:1/1;border-radius:16px;overflow:hidden;margin:14px auto;background:#000"></div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button id="start">Iniciar escaneo</button>
+        <button id="stop"  disabled>Detener</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Estado</h2>
+      <div id="status" class="log">Listo para escanear.</div>
+      <h2>Último registro</h2>
+      <div id="last" class="log">—</div>
+    </div>
+  </div>
+</body>
+</html>
