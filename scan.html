@@ -19,6 +19,8 @@
     .avatar{display:grid;place-items:center;background:#e5e7eb;color:#374151;font-weight:700;font-size:32px}
     .debug{font-size:.85rem;color:#9ca3af;margin-top:8px}
     .controls{display:grid;grid-template-columns:1fr;gap:12px;align-items:end}
+    .prefs{display:flex;gap:12px;align-items:center;margin-top:8px}
+    .prefs label{margin:0;font-weight:500}
   </style>
 
   <!-- Lector de QR -->
@@ -29,7 +31,7 @@
     import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
     import {
       getFirestore, serverTimestamp,
-      doc, getDoc, setDoc, collection, getDocs
+      doc, getDoc, setDoc
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
     // ⚙️ Config de Firebase
@@ -47,7 +49,7 @@
     const analytics = getAnalytics(app);
     const db  = getFirestore(app);
 
-    // Utilidad: probar URLs de imagen y devolver la primera que funcione
+    // Probar URLs de imagen
     function tryImageUrls(urls){
       return new Promise((resolve)=>{
         const img = new Image();
@@ -63,7 +65,7 @@
       });
     }
 
-    // Fecha (clave) siempre en America/New_York
+    // Fecha (NY)
     function buildTodayKey(){
       const fmt = new Intl.DateTimeFormat('en-CA', {
         timeZone: 'America/New_York',
@@ -76,6 +78,8 @@
       const teacherEl = document.getElementById('teacher');
       const camSel    = document.getElementById('cameraSel');
       const refreshBtn= document.getElementById('refreshCams');
+      const prefBack  = document.getElementById('prefBack');
+      const prefFront = document.getElementById('prefFront');
 
       const startBtn  = document.getElementById('start');
       const stopBtn   = document.getElementById('stop');
@@ -87,7 +91,7 @@
       const avatarEl = document.getElementById('avatar');
       const snameEl  = document.getElementById('sname');
       const ssidEl   = document.getElementById('ssid');
-      const scourseEl= document.getElementById('sorg'); // reutilizamos la línea para mostrar Curso
+      const scourseEl= document.getElementById('sorg'); // mostramos Curso aquí
 
       let html5QrCode = null;
       let running = false;
@@ -125,16 +129,16 @@
           try { camerasCache = await Html5Qrcode.getCameras(); } catch {}
 
           const selectedDeviceId = camSel.value || null;
-
-          // 1) Si el usuario eligió en el selector, usar ese deviceId.
-          // 2) Si no, intentar facingMode: environment; si falla, elegir por etiqueta back/rear/environment.
+          const preferred = prefFront.checked ? 'front' : 'back';
           let startArg = null;
 
           if (selectedDeviceId) {
             currentDeviceId = selectedDeviceId;
             startArg = currentDeviceId;
           } else {
-            const constraints = { facingMode: { ideal: "environment" } };
+            // Intento 1: facingMode según preferencia
+            const desiredFacing = preferred === 'front' ? 'user' : 'environment';
+            const constraints = { facingMode: { ideal: desiredFacing } };
             try {
               await html5QrCode.start(
                 constraints, { fps: 10, qrbox: { width: 280, height: 280 } }, onScanSuccess, () => {}
@@ -144,15 +148,19 @@
               startBtn.disabled = true; stopBtn.disabled = false;
               return;
             } catch (e) {
+              // Intento 2: elegir por etiqueta si facingMode falla
               if (camerasCache?.length) {
-                let chosen = camerasCache[0].id;
-                const rear = camerasCache.find(c =>
-                  (c.label || '').toLowerCase().includes('back') ||
-                  (c.label || '').toLowerCase().includes('rear') ||
-                  (c.label || '').toLowerCase().includes('environment')
-                );
-                chosen = rear ? rear.id : camerasCache[0].id;
-                currentDeviceId = chosen;
+                const findBy = (words)=> camerasCache.find(c => {
+                  const L = (c.label || '').toLowerCase();
+                  return words.some(w => L.includes(w));
+                });
+                let chosen = null;
+                if (preferred === 'back') {
+                  chosen = findBy(['back','rear','environment']) || camerasCache[0];
+                } else {
+                  chosen = findBy(['front','user']) || camerasCache[0];
+                }
+                currentDeviceId = chosen.id;
                 startArg = currentDeviceId;
               } else {
                 throw e;
@@ -160,12 +168,14 @@
             }
           }
 
+          // Intento 3: iniciar por deviceId elegido
           await html5QrCode.start(
             startArg, { fps: 10, qrbox: { width: 280, height: 280 } }, onScanSuccess, () => {}
           );
           running = true;
           statusEl.textContent = 'Escaneando...';
           startBtn.disabled = true; stopBtn.disabled = false;
+
         }catch(err){
           statusEl.innerHTML = `<span class="err">Error al iniciar: ${err.message}</span>`;
         }
@@ -193,7 +203,7 @@
 
           debugEl.textContent = `QR leído: ${decodedText}`;
 
-          // 2) Buscar perfil en Firestore (students/{sid})
+          // 2) Perfil en Firestore (students/{sid})
           let profile = null; let profileMsg = '';
           try{
             const snap = await getDoc(doc(db, "students", sid));
@@ -204,7 +214,6 @@
           }
 
           const teacher = teacherEl.value.trim();
-
           const displayName   = String(profile?.name || data.name || sid || '').trim();
           const displayCourse = String(profile?.course || data.course || '').trim();
           let   photoUrl      = String(profile?.photoUrl || data.photoUrl || '').trim();
@@ -236,7 +245,7 @@
             avatarEl.style.display = "grid";
           }
 
-          // 4) Guardar asistencia con docId = sid en ruta por día: attendanceByDate/{date}/entries/{sid}
+          // 4) Guardar asistencia por día (docId = sid)
           const dateKey = buildTodayKey();
           const attRef  = doc(db, "attendanceByDate", dateKey, "entries", sid);
           const exists  = await getDoc(attRef);
@@ -299,6 +308,11 @@ DocID: ${sid}`;
           <select id="cameraSel">
             <option value="">(Seleccionar automáticamente)</option>
           </select>
+          <div class="prefs">
+            <span>Preferencia:</span>
+            <label><input type="radio" name="pref" id="prefBack" value="back" checked> Trasera</label>
+            <label><input type="radio" name="pref" id="prefFront" value="front"> Frontal</label>
+          </div>
           <button id="refreshCams" type="button" style="margin-top:8px">Actualizar cámaras</button>
         </div>
       </div>
@@ -318,7 +332,7 @@ DocID: ${sid}`;
         <div>
           <div id="sname" style="font-weight:700;font-size:1.1rem">—</div>
           <div id="ssid" class="muted">—</div>
-          <div id="sorg" class="muted">—</div> <!-- aquí mostramos el Curso -->
+          <div id="sorg" class="muted">—</div> <!-- mostramos el Curso aquí -->
           <div id="debug" class="debug">—</div>
         </div>
       </div>
