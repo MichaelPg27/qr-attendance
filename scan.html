@@ -11,7 +11,7 @@
     label{display:block;margin:10px 0 6px;font-weight:600}
     input,select{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px}
     button{padding:10px 14px;border:0;border-radius:12px;cursor:pointer;box-shadow:0 6px 15px rgba(0,0,0,.08)}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .row{display:grid;grid-template-columns:1fr;gap:16px}
     .log{font-family:ui-monospace,Consolas;background:#0b1220;color:#e6edf3;padding:12px;border-radius:12px;white-space:pre-wrap}
     .ok{color:#4caf50} .err{color:#e53935} .muted{color:#6b7280}
     .student{display:flex;gap:14px;align-items:center}
@@ -28,11 +28,11 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
     import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
     import {
-      getFirestore, collection, serverTimestamp,
-      doc, getDoc, setDoc
+      getFirestore, serverTimestamp,
+      doc, getDoc, setDoc, collection, getDocs
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-    // ⚙️ Tu configuración de Firebase
+    // ⚙️ Config de Firebase
     const firebaseConfig = {
       apiKey: "AIzaSyAvf7Ioww9AhOVLoGzfi5I5PUwlhLE3gfM",
       authDomain: "holy-trinity-mass-attendance.firebaseapp.com",
@@ -63,9 +63,17 @@
       });
     }
 
+    // Fecha (clave) siempre en America/New_York
+    function buildTodayKey(){
+      const fmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year:'numeric', month:'2-digit', day:'2-digit'
+      });
+      return fmt.format(new Date()); // YYYY-MM-DD
+    }
+
     window.addEventListener('DOMContentLoaded', async () => {
       const teacherEl = document.getElementById('teacher');
-      const courseEl  = document.getElementById('course');
       const camSel    = document.getElementById('cameraSel');
       const refreshBtn= document.getElementById('refreshCams');
 
@@ -79,7 +87,7 @@
       const avatarEl = document.getElementById('avatar');
       const snameEl  = document.getElementById('sname');
       const ssidEl   = document.getElementById('ssid');
-      const sorgEl   = document.getElementById('sorg');
+      const scourseEl= document.getElementById('sorg'); // reutilizamos la línea para mostrar Curso
 
       let html5QrCode = null;
       let running = false;
@@ -174,15 +182,6 @@
         }
       }
 
-      // Helpers para fecha
-      function buildTodayKey(){
-        const d = new Date();
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth()+1).padStart(2,'0');
-        const dd = String(d.getDate()).padStart(2,'0');
-        return `${yyyy}-${mm}-${dd}`;
-      }
-
       async function onScanSuccess(decodedText){
         try{
           // 1) Decodificar QR
@@ -205,11 +204,10 @@
           }
 
           const teacher = teacherEl.value.trim();
-          const course  = courseEl.value.trim();
 
-          const displayName = String(profile?.name || data.name || sid || '').trim();
-          const displayOrg  = String(profile?.org || data.org || '').trim();
-          let   photoUrl    = String(profile?.photoUrl || data.photoUrl || '').trim();
+          const displayName   = String(profile?.name || data.name || sid || '').trim();
+          const displayCourse = String(profile?.course || data.course || '').trim();
+          let   photoUrl      = String(profile?.photoUrl || data.photoUrl || '').trim();
 
           // 3) Foto (o fallback a /fotos/<sid>.(png|jpg|jpeg))
           let usedFallback = false;
@@ -224,9 +222,9 @@
             if(res.ok){ photoUrl = res.url; usedFallback = true; }
           }
 
-          snameEl.textContent = displayName || sid;
-          ssidEl.textContent  = sid;
-          sorgEl.textContent  = displayOrg || '—';
+          snameEl.textContent   = displayName || sid;
+          ssidEl.textContent    = sid;
+          scourseEl.textContent = displayCourse || '—';
 
           if (photoUrl){
             photoEl.src = photoUrl;
@@ -248,6 +246,7 @@
             lastEl.textContent =
 `⏭️ Duplicado evitado
 Alumno: ${displayName} (${sid})
+Curso: ${displayCourse || '—'}
 Fecha: ${dateKey}`;
             debugEl.textContent = `${profileMsg}${usedFallback ? ' | Foto fallback: '+photoUrl : (photoUrl ? ' | Foto encontrada' : ' | Sin foto')}`;
             return;
@@ -256,16 +255,17 @@ Fecha: ${dateKey}`;
           await setDoc(attRef, {
             sid,
             name: displayName || "",
-            org: displayOrg || "",
+            course: displayCourse || "",
             photoUrl: photoUrl || "",
-            teacher, course,
+            teacher,
             dateKey,
             scannedAt: serverTimestamp()
           });
 
           lastEl.textContent =
 `✔️ Registrado: ${displayName} (${sid})
-Profesor: ${teacher}${course ? " | Curso: "+course : ""}
+Profesor: ${teacher}
+Curso: ${displayCourse || '—'}
 Fecha: ${dateKey}
 DocID: ${sid}`;
           statusEl.innerHTML = `<span class="ok">Asistencia guardada</span>`;
@@ -290,10 +290,6 @@ DocID: ${sid}`;
         <div>
           <label for="teacher">Nombre del profesor/a</label>
           <input id="teacher" placeholder="Ej. Prof. Rodríguez" />
-        </div>
-        <div>
-          <label for="course">Asignatura / Grupo (opcional)</label>
-          <input id="course" placeholder="Ej. Matemáticas 7°B" />
         </div>
       </div>
 
@@ -322,7 +318,7 @@ DocID: ${sid}`;
         <div>
           <div id="sname" style="font-weight:700;font-size:1.1rem">—</div>
           <div id="ssid" class="muted">—</div>
-          <div id="sorg" class="muted">—</div>
+          <div id="sorg" class="muted">—</div> <!-- aquí mostramos el Curso -->
           <div id="debug" class="debug">—</div>
         </div>
       </div>
