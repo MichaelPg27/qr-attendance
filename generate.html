@@ -28,11 +28,14 @@
         <input id="name" placeholder="p.ej. Ana Pérez" />
       </div>
     </div>
-    <label for="course">Curso (opcional)</label>
-    <input id="course" placeholder="Matemáticas 7°B" />
+
+    <!-- Solo cambia el texto y placeholder; se mantiene id="course" -->
+    <label for="course">Catequista (opcional)</label>
+    <input id="course" placeholder="p.ej. Catequista María" />
+
     <button id="gen">Generar QR</button>
     <div id="qr"></div>
-    <p class="muted">El QR contiene un JSON como: {"sid":"STU123","name":"Ana","course":"Matemáticas 7°B"}</p>
+    <p class="muted">El QR contiene un JSON como: {"sid":"STU123","name":"Ana","course":"Catequista María"}</p>
     <button id="download" style="display:none">Descargar PNG</button>
   </div>
 
@@ -57,7 +60,7 @@
       const qrDiv = document.getElementById('qr');
       qrDiv.innerHTML = '';
       const qr = new QRCode(qrDiv, {
-        text: payloadUtf8,           // usar la versión UTF-8
+        text: payloadUtf8,
         width: 256,
         height: 256,
         correctLevel: QRCode.CorrectLevel.M
