@@ -15,15 +15,50 @@
     .muted{color:#6b7280}
     .out{font-family:ui-monospace,Consolas;background:#0b1220;color:#e6edf3;padding:12px;border-radius:12px;white-space:pre-wrap}
     canvas{background:#fff;border-radius:12px}
+    .status{font:12px ui-monospace;color:#6b7280;margin-top:6px}
   </style>
-  <!-- Librería de QR (global: window.QRCode). Sin defer ni type="module". -->
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+
+  <!-- Cargador robusto de la librería de QR (intenta 3 CDNs) -->
+  <script>
+    (function loadQrLib(){
+      const urls = [
+        "https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js",
+        "https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js",
+        "https://cdnjs.cloudflare.com/ajax/libs/qrcode/1.5.3/qrcode.min.js"
+      ];
+      let i = 0;
+      function tryNext(){
+        if(i >= urls.length){
+          document.dispatchEvent(new CustomEvent('qr-failed'));
+          return;
+        }
+        const s = document.createElement('script');
+        s.src = urls[i++];
+        s.async = true;
+        s.crossOrigin = "anonymous";
+        s.referrerPolicy = "no-referrer";
+        s.onload = () => {
+          if (window.QRCode && typeof window.QRCode.toCanvas === 'function') {
+            document.dispatchEvent(new CustomEvent('qr-ready'));
+          } else {
+            tryNext();
+          }
+        };
+        s.onerror = tryNext;
+        document.head.appendChild(s);
+      }
+      tryNext();
+    })();
+  </script>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <h1>Generar QR de Estudiante</h1>
-      <div class="row">
+
+      <div class="status" id="libStatus">Cargando librería QR…</div>
+
+      <div class="row" style="margin-top:8px">
         <div>
           <label for="sid">SID (obligatorio)</label>
           <input id="sid" placeholder="Ej. 1001" required/>
@@ -33,19 +68,20 @@
           <input id="name" placeholder="Ej. Ana Pérez"/>
         </div>
       </div>
+
       <div>
-        <label for="course">Curso (obligatorio)</label>
-        <input id="course" placeholder="Ej. Matemáticas 7°B" required/>
+        <label for="course">Curso (opcional)</label>
+        <input id="course" placeholder="Ej. Matemáticas 7°B"/>
       </div>
 
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-        <button id="btnGen" type="button">Generar QR</button>
+        <button id="btnGen" type="button" disabled>Generar QR</button>
         <button id="btnDl"  type="button" disabled>Descargar PNG</button>
         <button id="btnReset" type="button">Limpiar</button>
       </div>
 
       <div class="muted" style="margin-top:8px">
-        El QR contendrá un JSON con <code>sid</code>, <code>name</code> y <code>course</code>.
+        El QR contendrá <code>sid</code> y, si los completas, <code>name</code> y <code>course</code>.
       </div>
     </div>
 
@@ -66,21 +102,34 @@
     const btnGen   = document.getElementById('btnGen');
     const btnDl    = document.getElementById('btnDl');
     const btnReset = document.getElementById('btnReset');
+    const libStatus= document.getElementById('libStatus');
+
+    // Habilita botones cuando la librería esté lista
+    document.addEventListener('qr-ready', () => {
+      libStatus.textContent = "Librería QR cargada ✅";
+      btnGen.disabled = false;
+    });
+    document.addEventListener('qr-failed', () => {
+      libStatus.textContent = "❌ No se pudo cargar la librería QR (revisa bloqueadores o red).";
+      btnGen.disabled = true;
+    });
 
     function buildPayload(){
       const sid = sidEl.value.trim();
       const name = nameEl.value.trim();
       const course = courseEl.value.trim();
 
-      if(!sid)    throw new Error('Falta SID');
-      if(!course) throw new Error('Falta Curso');
+      if(!sid) throw new Error('Falta SID');
 
-      return JSON.stringify({ sid, name, course });
+      const payload = { sid };
+      if (name)   payload.name = name;
+      if (course) payload.course = course;
+      return JSON.stringify(payload);
     }
 
     async function renderQR(text){
-      if (!window.QRCode || !window.QRCode.toCanvas) {
-        throw new Error('La librería de QR no cargó. Revisa el script del CDN.');
+      if (!window.QRCode || typeof window.QRCode.toCanvas !== 'function') {
+        throw new Error('La librería de QR no cargó. Revisa bloqueadores o la conexión.');
       }
       await window.QRCode.toCanvas(canvas, text, { width: 280, margin: 2 });
       btnDl.disabled = false;
