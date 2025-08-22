@@ -6,23 +6,30 @@
   <title>Escanear Asistencia</title>
   <style>
     body{font-family:system-ui,Arial;margin:24px;background:#f7f7f8;color:#111}
-    .wrap{max-width:760px;margin:auto;display:grid;gap:16px}
+    .wrap{max-width:860px;margin:auto;display:grid;gap:16px}
     .card{background:#fff;padding:16px;border-radius:16px;box-shadow:0 10px 25px rgba(0,0,0,.08)}
     label{display:block;margin:10px 0 6px;font-weight:600}
     input{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px}
     button{padding:10px 14px;border:0;border-radius:12px;cursor:pointer;box-shadow:0 6px 15px rgba(0,0,0,.08)}
     .log{font-family:ui-monospace,Consolas;background:#0b1220;color:#e6edf3;padding:12px;border-radius:12px;white-space:pre-wrap}
-    .ok{color:#4caf50} .err{color:#e53935}
+    .ok{color:#4caf50} .err{color:#e53935} .muted{color:#6b7280}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .student{display:flex;gap:14px;align-items:center}
+    .avatar,.photo{width:96px;height:96px;border-radius:50%;object-fit:cover;flex:0 0 auto}
+    .avatar{display:grid;place-items:center;background:#e5e7eb;color:#374151;font-weight:700;font-size:32px}
+    .debug{font-size:.85rem;color:#9ca3af;margin-top:8px}
   </style>
   <script src="https://unpkg.com/html5-qrcode" defer></script>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
     import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
-    import { getFirestore, collection, addDoc, serverTimestamp } 
-      from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import {
+      getFirestore, collection, addDoc, serverTimestamp,
+      doc, getDoc
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-    // Your Firebase configuration
+    // ⚙️ Tu configuración
     const firebaseConfig = {
       apiKey: "AIzaSyAvf7Ioww9AhOVLoGzfi5I5PUwlhLE3gfM",
       authDomain: "holy-trinity-mass-attendance.firebaseapp.com",
@@ -33,10 +40,25 @@
       measurementId: "G-QT30TYNQ83"
     };
 
-    // Initialize Firebase
     const app = initializeApp(firebaseConfig);
     const analytics = getAnalytics(app);
     const db  = getFirestore(app);
+
+    // intenta cargar una imagen y resuelve con la primera que funcione
+    function tryImageUrls(urls){
+      return new Promise((resolve)=>{
+        const img = new Image();
+        let i = 0;
+        const tryNext = ()=>{
+          if(i >= urls.length){ resolve({ ok:false }); return; }
+          const url = urls[i++];
+          img.onload = ()=> resolve({ ok:true, url });
+          img.onerror = tryNext;
+          img.src = url;
+        };
+        tryNext();
+      });
+    }
 
     window.addEventListener('DOMContentLoaded', () => {
       const teacherEl = document.getElementById('teacher');
@@ -45,6 +67,14 @@
       const stopBtn   = document.getElementById('stop');
       const statusEl  = document.getElementById('status');
       const lastEl    = document.getElementById('last');
+      const debugEl   = document.getElementById('debug');
+
+      const photoEl  = document.getElementById('photo');
+      const avatarEl = document.getElementById('avatar');
+      const snameEl  = document.getElementById('sname');
+      const ssidEl   = document.getElementById('ssid');
+      const sorgEl   = document.getElementById('sorg');
+
       let html5QrCode = null;
       let running = false;
 
@@ -86,34 +116,73 @@
 
       async function onScanSuccess(decodedText){
         try{
-          let data;
+          // 1) Decodifica QR
+          let data; let sid;
           try{ data = JSON.parse(decodedText); }
-          catch{ data = { sid: decodedText.trim(), name: "", org: "" }; }
+          catch{ data = { sid: decodedText }; }
+          sid = String((data.sid ?? '')).trim();
+          if(!sid){ statusEl.innerHTML = `<span class="err">QR inválido: falta sid</span>`; return; }
 
-          if(!data.sid){
-            statusEl.innerHTML = `<span class="err">QR inválido: falta sid</span>`;
-            return;
+          debugEl.textContent = `QR leído: ${decodedText}`;
+
+          // 2) Busca perfil en Firestore
+          let profile = null; let profileMsg = '';
+          try{
+            const snap = await getDoc(doc(db, "students", sid));
+            if (snap.exists()){ profile = snap.data(); profileMsg = 'Perfil encontrado en students/'+sid; }
+            else { profileMsg = 'No existe students/'+sid; }
+          }catch(e){
+            profileMsg = 'Error leyendo students/'+sid+': '+e.message;
           }
 
           const teacher = teacherEl.value.trim();
           const course  = courseEl.value.trim();
 
+          const displayName = String(profile?.name || data.name || sid || '').trim();
+          const displayOrg  = String(profile?.org || data.org || '').trim();
+          let   photoUrl    = String(profile?.photoUrl || data.photoUrl || '').trim();
+
+          // 3) Mostrar foto (o intentar fallback)
+          let usedFallback = false;
+          if (!photoUrl){
+            const base = 'https://michaelpg27.github.io/qr-attendance/fotos/';
+            const candidates = [base+encodeURIComponent(sid)+'.png', base+encodeURIComponent(sid)+'.jpg', base+encodeURIComponent(sid)+'.jpeg'];
+            const res = await tryImageUrls(candidates);
+            if(res.ok){ photoUrl = res.url; usedFallback = true; }
+          }
+
+          snameEl.textContent = displayName || sid;
+          ssidEl.textContent  = sid;
+          sorgEl.textContent  = displayOrg || '—';
+
+          if (photoUrl){
+            photoEl.src = photoUrl;
+            photoEl.style.display = "block";
+            avatarEl.style.display = "none";
+          } else {
+            photoEl.style.display = "none";
+            avatarEl.textContent = (displayName || sid || '?').trim().charAt(0).toUpperCase() || '?';
+            avatarEl.style.display = "grid";
+          }
+
+          // 4) Guarda asistencia
           const docRef = await addDoc(collection(db, "attendance"), {
-            sid: String(data.sid),
-            name: String(data.name || ""),
-            org: String(data.org || ""),
-            teacher,
-            course,
+            sid,
+            name: displayName || "",
+            org: displayOrg || "",
+            photoUrl: photoUrl || "",
+            teacher, course,
             scannedAt: serverTimestamp()
           });
 
-          lastEl.innerHTML =
-`✔️ Registrado: ${data.name ? data.name+" ("+data.sid+")" : data.sid}
+          lastEl.textContent =
+`✔️ Registrado: ${displayName} (${sid})
 Profesor: ${teacher}${course ? " | Curso: "+course : ""}
 DocID: ${docRef.id}`;
           statusEl.innerHTML = `<span class="ok">Asistencia guardada</span>`;
+          debugEl.textContent = `${profileMsg}${usedFallback ? ' | Foto por fallback: '+photoUrl : (photoUrl ? ' | Foto desde profile/QR' : ' | Sin foto disponible')}`;
         }catch(err){
-          statusEl.innerHTML = `<span class="err">Error al guardar: ${err.message}</span>`;
+          statusEl.innerHTML = `<span class="err">Error: ${err.message}</span>`;
         }
       }
 
@@ -126,14 +195,35 @@ DocID: ${docRef.id}`;
   <div class="wrap">
     <div class="card">
       <h1>Escanear Asistencia</h1>
-      <label for="teacher">Nombre del profesor/a</label>
-      <input id="teacher" placeholder="Ej. Prof. Rodríguez" />
-      <label for="course">Asignatura / Grupo (opcional)</label>
-      <input id="course" placeholder="Ej. Matemáticas 7°B" />
+      <div class="row">
+        <div>
+          <label for="teacher">Nombre del profesor/a</label>
+          <input id="teacher" placeholder="Ej. Prof. Rodríguez" />
+        </div>
+        <div>
+          <label for="course">Asignatura / Grupo (opcional)</label>
+          <input id="course" placeholder="Ej. Matemáticas 7°B" />
+        </div>
+      </div>
+
       <div id="reader" style="width:100%;max-width:420px;aspect-ratio:1/1;border-radius:16px;overflow:hidden;margin:14px auto;background:#000"></div>
       <div style="display:flex;gap:10px;justify-content:center">
         <button id="start">Iniciar escaneo</button>
         <button id="stop"  disabled>Detener</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Estudiante</h2>
+      <div class="student">
+        <img id="photo" class="photo" alt="Foto del estudiante" style="display:none" />
+        <div id="avatar" class="avatar">?</div>
+        <div>
+          <div id="sname" style="font-weight:700;font-size:1.1rem">—</div>
+          <div id="ssid" class="muted">—</div>
+          <div id="sorg" class="muted">—</div>
+          <div id="debug" class="debug">—</div>
+        </div>
       </div>
     </div>
 
