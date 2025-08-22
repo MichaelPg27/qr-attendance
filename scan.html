@@ -18,8 +18,7 @@
     .avatar,.photo{width:96px;height:96px;border-radius:50%;object-fit:cover;flex:0 0 auto}
     .avatar{display:grid;place-items:center;background:#e5e7eb;color:#374151;font-weight:700;font-size:32px}
     .debug{font-size:.85rem;color:#9ca3af;margin-top:8px}
-    .controls{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end}
-    .inline{display:inline-flex;gap:8px;align-items:center;margin:8px 0}
+    .controls{display:grid;grid-template-columns:1fr;gap:12px;align-items:end}
     .hint{font-size:.85rem;color:#6b7280;margin-top:4px}
   </style>
 
@@ -34,7 +33,7 @@
       doc, getDoc, setDoc
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-    // ⚙️ Config de Firebase
+    // ⚙️ Firebase
     const firebaseConfig = {
       apiKey: "AIzaSyAvf7Ioww9AhOVLoGzfi5I5PUwlhLE3gfM",
       authDomain: "holy-trinity-mass-attendance.firebaseapp.com",
@@ -49,7 +48,7 @@
     const analytics = getAnalytics(app);
     const db  = getFirestore(app);
 
-    // Probar URLs de imagen y devolver la primera que funcione
+    // Candidatos de foto
     function tryImageUrls(urls){
       return new Promise((resolve)=>{
         const img = new Image();
@@ -65,18 +64,18 @@
       });
     }
 
-    // Fecha (clave) siempre en America/New_York
+    // Clave de fecha NY
     function buildTodayKey(){
       return new Intl.DateTimeFormat('en-CA', {
         timeZone: 'America/New_York',
         year:'numeric', month:'2-digit', day:'2-digit'
-      }).format(new Date()); // YYYY-MM-DD
+      }).format(new Date());
     }
 
     window.addEventListener('DOMContentLoaded', async () => {
       const teacherEl   = document.getElementById('teacher');
       const courseEl    = document.getElementById('course');
-      const frontCamEl  = document.getElementById('frontCam');
+
       const camSel      = document.getElementById('cameraSel');
       const refreshBtn  = document.getElementById('refreshCams');
 
@@ -90,7 +89,7 @@
       const avatarEl = document.getElementById('avatar');
       const snameEl  = document.getElementById('sname');
       const ssidEl   = document.getElementById('ssid');
-      const sorgEl   = document.getElementById('sorg'); // aquí mostramos el Curso
+      const scourseEl= document.getElementById('sorg'); // mostramos Curso aquí
 
       let html5QrCode = null;
       let running = false;
@@ -123,18 +122,17 @@
           if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
           if (running) { await html5QrCode.stop(); await html5QrCode.clear(); running = false; }
 
-          // Actualiza listado tras permisos (algunos navegadores no muestran label hasta dar permiso)
+          // Actualiza listado tras permisos
           try { camerasCache = await Html5Qrcode.getCameras(); } catch {}
 
           const selectedDeviceId = camSel.value || null;
-          const wantFront = frontCamEl.checked;
           let startArg = null;
 
           if (selectedDeviceId) {
             startArg = selectedDeviceId;
           } else {
-            // Intento 1: facingMode según preferencia (por defecto environment = trasera)
-            const constraints = { facingMode: wantFront ? "user" : "environment" };
+            // Intento 1: trasera por facingMode
+            const constraints = { facingMode: { ideal: "environment" } };
             try {
               await html5QrCode.start(
                 constraints, { fps: 10, qrbox: { width: 280, height: 280 } }, onScanSuccess, () => {}
@@ -144,26 +142,20 @@
               startBtn.disabled = true; stopBtn.disabled = false;
               return;
             } catch (e) {
-              // Intento 2: elegir por etiqueta si facingMode falla
+              // Intento 2: buscar por etiqueta; si no, primera
               if (camerasCache?.length) {
-                const findBy = (words)=> camerasCache.find(d => {
+                const rear = camerasCache.find(d => {
                   const L = (d.label || '').toLowerCase();
-                  return words.some(w => L.includes(w));
+                  return L.includes('back') || L.includes('rear') || L.includes('environment');
                 });
-                let chosen = null;
-                if (wantFront) {
-                  chosen = findBy(['front','user','face']) || camerasCache[0];
-                } else {
-                  chosen = findBy(['back','rear','environment']) || camerasCache[0];
-                }
-                startArg = chosen.id;
+                startArg = (rear || camerasCache[0]).id;
               } else {
                 throw e;
               }
             }
           }
 
-          // Intento 3: iniciar por deviceId elegido
+          // Intento 3: iniciar por deviceId
           await html5QrCode.start(
             startArg, { fps: 10, qrbox: { width: 280, height: 280 } }, onScanSuccess, () => {}
           );
@@ -189,16 +181,21 @@
 
       async function onScanSuccess(decodedText){
         try{
+          // --- Reparar UTF-8 si venía de qrcodejs antiguo ---
+          let raw = decodedText;
+          try { raw = decodeURIComponent(escape(raw)); } catch(_) {}
+          // ---------------------------------------------------
+
           // 1) Decodificar QR
           let data; let sid;
-          try{ data = JSON.parse(decodedText); }
-          catch{ data = { sid: decodedText }; }
+          try{ data = JSON.parse(raw); }
+          catch{ data = { sid: raw }; }
           sid = String((data.sid ?? '')).trim();
           if(!sid){ statusEl.innerHTML = `<span class="err">QR inválido: falta sid</span>`; return; }
 
-          debugEl.textContent = `QR leído: ${decodedText}`;
+          debugEl.textContent = `QR leído: ${raw}`;
 
-          // 2) Perfil en Firestore (students/{sid})
+          // 2) Perfil en Firestore
           let profile = null; let profileMsg = '';
           try{
             const snap = await getDoc(doc(db, "students", sid));
@@ -210,9 +207,7 @@
 
           const teacher      = teacherEl.value.trim();
           const manualCourse = (courseEl?.value || '').trim();
-
           const displayName   = String(profile?.name || data.name || sid || '').trim();
-          // Prioridad: curso escrito → profile.course → QR.course → (compat) profile.org/QR.org
           const displayCourse = String(
             manualCourse || profile?.course || data.course || profile?.org || data.org || ''
           ).trim();
@@ -231,10 +226,10 @@
             if(res.ok){ photoUrl = res.url; usedFallback = true; }
           }
 
-          // 4) Mostrar en UI
-          snameEl.textContent = displayName || sid;
-          ssidEl.textContent  = sid;
-          sorgEl.textContent  = displayCourse || '—'; // aquí mostramos el Curso
+          // 4) Mostrar
+          snameEl.textContent  = displayName || sid;
+          ssidEl.textContent   = sid;
+          scourseEl.textContent= displayCourse || '—';
 
           if (photoUrl){
             photoEl.src = photoUrl;
@@ -246,14 +241,13 @@
             avatarEl.style.display = "grid";
           }
 
-          // 5) Guardar asistencia por día (evitar duplicados)
+          // 5) Guardar por fecha (evita duplicados del día)
           const dateKey = buildTodayKey();
           const attRef  = doc(db, "attendanceByDate", dateKey, "entries", sid);
 
-          // debug: mostrar a dónde guardamos
           statusEl.textContent = `Guardando en: attendanceByDate/${dateKey}/entries/${sid}`;
 
-          const exists  = await getDoc(attRef);
+          const exists = await getDoc(attRef);
           if (exists.exists()) {
             statusEl.innerHTML = `<span class="ok">Ya estaba registrado hoy (${dateKey}).</span>`;
             lastEl.textContent =
@@ -317,14 +311,7 @@ DocID: ${sid}`;
             <option value="">(Seleccionar automáticamente)</option>
           </select>
           <button id="refreshCams" type="button" style="margin-top:8px">Actualizar cámaras</button>
-          <div class="hint">Si la lista sale vacía, presiona “Iniciar escaneo” para otorgar permisos y luego “Actualizar cámaras”.</div>
-        </div>
-        <div>
-          <label class="inline">
-            <input type="checkbox" id="frontCam">
-            Usar cámara frontal (si no eliges una cámara arriba)
-          </label>
-          <div class="hint">Para cambiar de cámara durante la sesión, presiona <b>Detener</b> y luego <b>Iniciar</b> con la nueva selección.</div>
+          <div class="hint">Si la lista está vacía, pulsa <b>Iniciar escaneo</b> para dar permisos y luego <b>Actualizar cámaras</b>.</div>
         </div>
       </div>
 
