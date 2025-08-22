@@ -16,7 +16,7 @@
     .out{font-family:ui-monospace,Consolas;background:#0b1220;color:#e6edf3;padding:12px;border-radius:12px;white-space:pre-wrap}
     canvas{background:#fff;border-radius:12px}
   </style>
-  <!-- Lib de QR (CDN) -->
+  <!-- Librería de QR (global: window.QRCode). Sin defer ni type="module". -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 </head>
 <body>
@@ -72,15 +72,17 @@
       const name = nameEl.value.trim();
       const course = courseEl.value.trim();
 
-      if(!sid)   throw new Error('Falta SID');
+      if(!sid)    throw new Error('Falta SID');
       if(!course) throw new Error('Falta Curso');
 
-      const payload = { sid, name, course };
-      return JSON.stringify(payload);
+      return JSON.stringify({ sid, name, course });
     }
 
     async function renderQR(text){
-      await QRCode.toCanvas(canvas, text, { width: 280, margin: 2 });
+      if (!window.QRCode || !window.QRCode.toCanvas) {
+        throw new Error('La librería de QR no cargó. Revisa el script del CDN.');
+      }
+      await window.QRCode.toCanvas(canvas, text, { width: 280, margin: 2 });
       btnDl.disabled = false;
     }
 
