@@ -74,8 +74,8 @@
             Fecha: dateKey,
             SID: v.sid || docSnap.id,
             Nombre: v.name || "",
-            Curso: v.course || "",
-            Profesor: v.teacher || "",
+            "Catequista": v.course || "",               // antes "Curso"
+            "Nombre del Encargado": v.teacher || "",    // antes "Profesor"
             "Hora (local)": tsToLocal(v.scannedAt),
             Foto: v.photoUrl || ""
           });
@@ -84,7 +84,7 @@
         status(`Error leyendo attendanceByDate/${dateKey}: ${e.message}`);
       }
 
-      // B) (Opcional) Colección legado: attendance con campo dateKey=={dateKey}
+      // B) Colección legado: attendance con campo dateKey=={dateKey}
       try{
         const legacy = query(collection(db, "attendance"), where("dateKey", "==", dateKey));
         const legacySnap = await getDocs(legacy);
@@ -94,8 +94,8 @@
             Fecha: v.dateKey || dateKey,
             SID: v.sid || docSnap.id,
             Nombre: v.name || "",
-            Curso: v.course || "",
-            Profesor: v.teacher || "",
+            "Catequista": v.course || "",
+            "Nombre del Encargado": v.teacher || "",
             "Hora (local)": tsToLocal(v.scannedAt),
             Foto: v.photoUrl || ""
           });
@@ -104,10 +104,10 @@
         // Ignorar si no existe la colección legado
       }
 
-      // Filtro por curso (opcional)
+      // Filtro por Catequista (opcional) — se mantiene id="course"
       if(courseFilter){
         const cf = courseFilter.trim().toLowerCase();
-        return rows.filter(r => (r.Curso || "").toLowerCase().includes(cf));
+        return rows.filter(r => (r["Catequista"] || "").toLowerCase().includes(cf));
       }
       return rows;
     }
@@ -152,8 +152,8 @@
           <td>${r.Fecha}</td>
           <td>${r.SID}</td>
           <td>${r.Nombre}</td>
-          <td>${r.Curso}</td>
-          <td>${r.Profesor}</td>
+          <td>${r["Catequista"]}</td>
+          <td>${r["Nombre del Encargado"]}</td>
           <td>${r["Hora (local)"]}</td>
           <td>${r.Foto ? `<a href="${r.Foto}" target="_blank">ver</a>` : ""}</td>
         `;
@@ -201,7 +201,7 @@
   <div class="wrap">
     <div class="card">
       <h1>Reportes de Asistencia</h1>
-      <div class="tag">build: reports 2025-08-21.3 (sin “Institución”)</div>
+      <div class="tag">build: reports 2025-08-21.4 (encabezados ajustados)</div>
       <div class="grid">
         <div>
           <label>Desde</label>
@@ -212,8 +212,8 @@
           <input id="end" type="date"/>
         </div>
         <div>
-          <label>Curso (opcional)</label>
-          <input id="course" placeholder="Ej. Matemáticas 7°B"/>
+          <label>Catequista (opcional)</label>
+          <input id="course" placeholder="p.ej. Catequista María"/>
         </div>
         <div class="actions" style="align-items:end">
           <button id="btnLoad"  type="button">Ver datos</button>
@@ -228,8 +228,13 @@
       <table id="tbl">
         <thead>
           <tr>
-            <th>Fecha</th><th>SID</th><th>Nombre</th>
-            <th>Curso</th><th>Profesor</th><th>Hora (local)</th><th>Foto</th>
+            <th>Fecha</th>
+            <th>SID</th>
+            <th>Nombre</th>
+            <th>Catequista</th>
+            <th>Nombre del Encargado</th>
+            <th>Hora (local)</th>
+            <th>Foto</th>
           </tr>
         </thead>
         <tbody><tr><td colspan="7" class="muted">Sin resultados</td></tr></tbody>
