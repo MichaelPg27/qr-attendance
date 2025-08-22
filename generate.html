@@ -48,11 +48,19 @@
       const name = document.getElementById('name').value.trim();
       const course = document.getElementById('course').value.trim();
       if(!sid || !name){ alert('Completa ID y Nombre'); return; }
+
+      // --- UTF-8 FIX para qrcodejs 1.0.0 ---
       const payload = JSON.stringify({ sid, name, course });
+      const payloadUtf8 = unescape(encodeURIComponent(payload)); // fuerza UTF-8
+      // -------------------------------------
+
       const qrDiv = document.getElementById('qr');
       qrDiv.innerHTML = '';
       const qr = new QRCode(qrDiv, {
-        text: payload, width: 256, height: 256, correctLevel: QRCode.CorrectLevel.M
+        text: payloadUtf8,           // usar la versión UTF-8
+        width: 256,
+        height: 256,
+        correctLevel: QRCode.CorrectLevel.M
       });
 
       setTimeout(() => {
