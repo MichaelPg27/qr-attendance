@@ -11,7 +11,7 @@
     label{display:block;margin:10px 0 6px;font-weight:600}
     input,select{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px}
     button{padding:10px 14px;border:0;border-radius:12px;cursor:pointer;box-shadow:0 6px 15px rgba(0,0,0,.08)}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .row{display:grid;grid-template-columns:1fr;gap:16px}
     .log{font-family:ui-monospace,Consolas;background:#0b1220;color:#e6edf3;padding:12px;border-radius:12px;white-space:pre-wrap}
     .ok{color:#4caf50} .err{color:#e53935} .muted{color:#6b7280}
     .student{display:flex;gap:14px;align-items:center}
@@ -74,7 +74,6 @@
 
     window.addEventListener('DOMContentLoaded', async () => {
       const teacherEl   = document.getElementById('teacher');
-      const courseEl    = document.getElementById('course');
 
       const camSel      = document.getElementById('cameraSel');
       const refreshBtn  = document.getElementById('refreshCams');
@@ -89,7 +88,7 @@
       const avatarEl = document.getElementById('avatar');
       const snameEl  = document.getElementById('sname');
       const ssidEl   = document.getElementById('ssid');
-      const scourseEl= document.getElementById('sorg'); // mostramos Curso aquí
+      const scourseEl= document.getElementById('sorg'); // mostramos Curso si existe en perfil/QR
 
       let html5QrCode = null;
       let running = false;
@@ -115,7 +114,7 @@
 
       async function startScan(){
         const teacher = teacherEl.value.trim();
-        if(!teacher){ alert('Ingresa tu nombre (profesor/a)'); return; }
+        if(!teacher){ alert('Ingresa el nombre del encargado'); return; }
         statusEl.textContent = 'Iniciando cámara...';
 
         try{
@@ -206,10 +205,10 @@
           }
 
           const teacher      = teacherEl.value.trim();
-          const manualCourse = (courseEl?.value || '').trim();
           const displayName   = String(profile?.name || data.name || sid || '').trim();
+          // Curso solo si viene del perfil o del QR (ya no hay input manual)
           const displayCourse = String(
-            manualCourse || profile?.course || data.course || profile?.org || data.org || ''
+            profile?.course || data.course || profile?.org || data.org || ''
           ).trim();
           let   photoUrl      = String(profile?.photoUrl || data.photoUrl || '').trim();
 
@@ -227,9 +226,9 @@
           }
 
           // 4) Mostrar
-          snameEl.textContent  = displayName || sid;
-          ssidEl.textContent   = sid;
-          scourseEl.textContent= displayCourse || '—';
+          snameEl.textContent   = displayName || sid;
+          ssidEl.textContent    = sid;
+          scourseEl.textContent = displayCourse || '—';
 
           if (photoUrl){
             photoEl.src = photoUrl;
@@ -264,14 +263,14 @@ Fecha: ${dateKey}`;
             name: displayName || "",
             course: displayCourse || "",
             photoUrl: photoUrl || "",
-            teacher,
+            teacher,           // mantenemos el campo 'teacher' en la BD
             dateKey,
             scannedAt: serverTimestamp()
           });
 
           lastEl.textContent =
 `✔️ Registrado: ${displayName} (${sid})
-Profesor: ${teacher}
+Encargado: ${teacher}
 Curso: ${displayCourse || '—'}
 Fecha: ${dateKey}
 DocID: ${sid}`;
@@ -295,12 +294,8 @@ DocID: ${sid}`;
 
       <div class="row">
         <div>
-          <label for="teacher">Nombre del profesor/a</label>
-          <input id="teacher" placeholder="Ej. Prof. Rodríguez" />
-        </div>
-        <div>
-          <label for="course">Asignatura / Grupo (opcional)</label>
-          <input id="course" placeholder="Ej. Matemáticas 7°B" />
+          <label for="teacher">Nombre del encargado</label>
+          <input id="teacher" placeholder="Ej. Sr(a). López" />
         </div>
       </div>
 
@@ -330,7 +325,7 @@ DocID: ${sid}`;
         <div>
           <div id="sname" style="font-weight:700;font-size:1.1rem">—</div>
           <div id="ssid" class="muted">—</div>
-          <div id="sorg" class="muted">—</div> <!-- mostramos el Curso aquí -->
+          <div id="sorg" class="muted">—</div> <!-- mostramos Curso si viene en perfil/QR -->
           <div id="debug" class="debug">—</div>
         </div>
       </div>
