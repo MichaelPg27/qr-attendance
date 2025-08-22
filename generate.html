@@ -28,11 +28,11 @@
         <input id="name" placeholder="p.ej. Ana Pérez" />
       </div>
     </div>
-    <label for="org">Institución (opcional)</label>
-    <input id="org" placeholder="Colegio X" />
+    <label for="course">Curso (opcional)</label>
+    <input id="course" placeholder="Matemáticas 7°B" />
     <button id="gen">Generar QR</button>
     <div id="qr"></div>
-    <p class="muted">El QR contiene un JSON como: {"sid":"STU123","name":"Ana","org":"Colegio X"}</p>
+    <p class="muted">El QR contiene un JSON como: {"sid":"STU123","name":"Ana","course":"Matemáticas 7°B"}</p>
     <button id="download" style="display:none">Descargar PNG</button>
   </div>
 
@@ -46,9 +46,9 @@
     btn.addEventListener('click', () => {
       const sid = document.getElementById('sid').value.trim();
       const name = document.getElementById('name').value.trim();
-      const org = document.getElementById('org').value.trim();
+      const course = document.getElementById('course').value.trim();
       if(!sid || !name){ alert('Completa ID y Nombre'); return; }
-      const payload = JSON.stringify({ sid, name, org });
+      const payload = JSON.stringify({ sid, name, course });
       const qrDiv = document.getElementById('qr');
       qrDiv.innerHTML = '';
       const qr = new QRCode(qrDiv, {
