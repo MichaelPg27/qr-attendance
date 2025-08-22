@@ -17,17 +17,17 @@
     th,td{padding:8px;border-bottom:1px solid #eee;text-align:left}
     th{background:#f1f5f9}
     .muted{color:#6b7280}
+    .tag{font:12px ui-monospace;color:#6b7280}
   </style>
   <!-- SheetJS para Excel -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
     import {
-      getFirestore, collection, getDocs, doc, getDoc
+      getFirestore, collection, getDocs, query, where
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-    // ⚙️ TU CONFIG (misma que en scan.html)
+    // ⚙️ MISMA CONFIG QUE EN scan.html
     const firebaseConfig = {
       apiKey: "AIzaSyAvf7Ioww9AhOVLoGzfi5I5PUwlhLE3gfM",
       authDomain: "holy-trinity-mass-attendance.firebaseapp.com",
@@ -38,15 +38,18 @@
       measurementId: "G-QT30TYNQ83"
     };
     const app = initializeApp(firebaseConfig);
-    const analytics = getAnalytics(app);
-    const db = getFirestore(app);
+    const db  = getFirestore(app);
 
-    // Helpers
-    function fmtDate(d){ const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),da=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${da}`;}
-    function* daysBetween(d1,d2){
-      const a=new Date(d1.getFullYear(),d1.getMonth(),d1.getDate());
-      const b=new Date(d2.getFullYear(),d2.getMonth(),d2.getDate());
-      for(let d=a; d<=b; d.setDate(d.getDate()+1)) yield fmtDate(d);
+    // ===== Helpers =====
+    function fmtDateNY(d){
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone:'America/New_York', year:'numeric', month:'2-digit', day:'2-digit'
+      }).format(d); // YYYY-MM-DD
+    }
+    function* daysBetweenNY(d1,d2){
+      const start = new Date(d1.getFullYear(),d1.getMonth(),d1.getDate());
+      const end   = new Date(d2.getFullYear(),d2.getMonth(),d2.getDate());
+      for(let d=start; d<=end; d.setDate(d.getDate()+1)) yield fmtDateNY(d);
     }
     function tsToLocal(ts){
       if(!ts) return "";
@@ -59,62 +62,88 @@
 
     let lastRows = [];
 
-    async function fetchDay(dateKey){
-      const col = collection(db, "attendanceByDate", dateKey, "entries");
-      const snap = await getDocs(col);
+    async function fetchDay(dateKey, courseFilter){
       const rows = [];
-      snap.forEach(docSnap=>{
-        const v = docSnap.data();
-        rows.push({
-          Fecha: dateKey,
-          SID: v.sid || docSnap.id,
-          Nombre: v.name || "",
-          Institución: v.org || "",
-          Curso: v.course || "",
-          Profesor: v.teacher || "",
-          "Hora (local)": tsToLocal(v.scannedAt),
-          Foto: v.photoUrl || ""
+      // A) Colección nueva: attendanceByDate/{dateKey}/entries
+      try{
+        const col = collection(db, "attendanceByDate", dateKey, "entries");
+        const snap = await getDocs(col);
+        snap.forEach(docSnap=>{
+          const v = docSnap.data();
+          rows.push({
+            Fecha: dateKey,
+            SID: v.sid || docSnap.id,
+            Nombre: v.name || "",
+            Curso: v.course || "",
+            Profesor: v.teacher || "",
+            "Hora (local)": tsToLocal(v.scannedAt),
+            Foto: v.photoUrl || ""
+          });
         });
-      });
+      }catch(e){
+        status(`Error leyendo attendanceByDate/${dateKey}: ${e.message}`);
+      }
+
+      // B) (Opcional) Colección legado: attendance con campo dateKey=={dateKey}
+      try{
+        const legacy = query(collection(db, "attendance"), where("dateKey", "==", dateKey));
+        const legacySnap = await getDocs(legacy);
+        legacySnap.forEach(docSnap=>{
+          const v = docSnap.data();
+          rows.push({
+            Fecha: v.dateKey || dateKey,
+            SID: v.sid || docSnap.id,
+            Nombre: v.name || "",
+            Curso: v.course || "",
+            Profesor: v.teacher || "",
+            "Hora (local)": tsToLocal(v.scannedAt),
+            Foto: v.photoUrl || ""
+          });
+        });
+      }catch(e){
+        // Ignorar si no existe la colección legado
+      }
+
+      // Filtro por curso (opcional)
+      if(courseFilter){
+        const cf = courseFilter.trim().toLowerCase();
+        return rows.filter(r => (r.Curso || "").toLowerCase().includes(cf));
+      }
       return rows;
     }
 
     async function loadReport(){
       const start = document.getElementById('start').value;
       const end   = document.getElementById('end').value;
-      const courseFilter = (document.getElementById('course').value || "").trim().toLowerCase();
+      const courseFilter = (document.getElementById('course').value || "");
 
       if(!start || !end){ alert("Selecciona fecha inicio y fin"); return; }
-      const d1 = new Date(start);
-      const d2 = new Date(end);
+      const d1 = new Date(start); const d2 = new Date(end);
       if(d2 < d1){ alert("La fecha fin no puede ser menor que la de inicio"); return; }
 
-      document.getElementById('status').textContent = "Cargando...";
+      status("Cargando...");
       let all = [];
-      for(const dateKey of daysBetween(d1,d2)){
-        const rows = await fetchDay(dateKey);
+      for(const dateKey of daysBetweenNY(d1,d2)){
+        const rows = await fetchDay(dateKey, courseFilter);
         all = all.concat(rows);
       }
-      if(courseFilter){
-        all = all.filter(r => (r.Curso || "").toLowerCase().includes(courseFilter));
-      }
-      // Ordenar: Fecha asc, Hora asc, Nombre asc
+      // Ordenar
       all.sort((a,b)=>{
         if(a.Fecha!==b.Fecha) return a.Fecha.localeCompare(b.Fecha);
-        if(a["Hora (local)"]!==b["Hora (local)"]) return a["Hora (local)"].localeCompare(b["Hora (local)"]);
+        if(a["Hora (local)"]!==b["Hora (local)"]) return (a["Hora (local)"]||"").localeCompare(b["Hora (local)"]||"");
         return (a.Nombre||"").localeCompare(b.Nombre||"");
       });
 
       lastRows = all;
       renderTable(all);
-      document.getElementById('status').textContent = `Listo. Registros: ${all.length}`;
+      status(`Listo. Registros: ${all.length}`);
     }
 
     function renderTable(rows){
       const tbody = document.querySelector('#tbl tbody');
       tbody.innerHTML = "";
       if(rows.length===0){
-        tbody.innerHTML = `<tr><td colspan="8" class="muted">Sin registros</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="muted">Sin registros</td></tr>`;
         return;
       }
       for(const r of rows){
@@ -123,7 +152,6 @@
           <td>${r.Fecha}</td>
           <td>${r.SID}</td>
           <td>${r.Nombre}</td>
-          <td>${r.Institución}</td>
           <td>${r.Curso}</td>
           <td>${r.Profesor}</td>
           <td>${r["Hora (local)"]}</td>
@@ -143,14 +171,29 @@
       XLSX.writeFile(wb, `asistencia_${start}_a_${end}.xlsx`);
     }
 
+    function status(msg){ document.getElementById('status').textContent = msg; }
+
     window.addEventListener('DOMContentLoaded', ()=>{
-      // Prefill: hoy
-      const today = fmtDate(new Date());
-      document.getElementById('start').value = today;
-      document.getElementById('end').value = today;
+      // Prefill HOY (America/New_York) y carga automática
+      const todayNY = new Intl.DateTimeFormat('en-CA', {
+        timeZone:'America/New_York', year:'numeric', month:'2-digit', day:'2-digit'
+      }).format(new Date());
+      document.getElementById('start').value = todayNY;
+      document.getElementById('end').value = todayNY;
 
       document.getElementById('btnLoad').addEventListener('click', loadReport);
       document.getElementById('btnExcel').addEventListener('click', downloadExcel);
+      document.getElementById('btnToday').addEventListener('click', ()=>{
+        const t = new Intl.DateTimeFormat('en-CA', {
+          timeZone:'America/New_York', year:'numeric', month:'2-digit', day:'2-digit'
+        }).format(new Date());
+        document.getElementById('start').value = t;
+        document.getElementById('end').value = t;
+        loadReport();
+      });
+
+      // Carga HOY al abrir
+      loadReport();
     });
   </script>
 </head>
@@ -158,6 +201,7 @@
   <div class="wrap">
     <div class="card">
       <h1>Reportes de Asistencia</h1>
+      <div class="tag">build: reports 2025-08-21.3 (sin “Institución”)</div>
       <div class="grid">
         <div>
           <label>Desde</label>
@@ -172,7 +216,8 @@
           <input id="course" placeholder="Ej. Matemáticas 7°B"/>
         </div>
         <div class="actions" style="align-items:end">
-          <button id="btnLoad" type="button">Ver datos</button>
+          <button id="btnLoad"  type="button">Ver datos</button>
+          <button id="btnToday" type="button">Hoy</button>
           <button id="btnExcel" type="button">Descargar Excel</button>
         </div>
       </div>
@@ -183,11 +228,11 @@
       <table id="tbl">
         <thead>
           <tr>
-            <th>Fecha</th><th>SID</th><th>Nombre</th><th>Institución</th>
+            <th>Fecha</th><th>SID</th><th>Nombre</th>
             <th>Curso</th><th>Profesor</th><th>Hora (local)</th><th>Foto</th>
           </tr>
         </thead>
-        <tbody><tr><td colspan="8" class="muted">Sin resultados</td></tr></tbody>
+        <tbody><tr><td colspan="7" class="muted">Sin resultados</td></tr></tbody>
       </table>
     </div>
   </div>
