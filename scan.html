@@ -18,7 +18,9 @@
     .avatar,.photo{width:96px;height:96px;border-radius:50%;object-fit:cover;flex:0 0 auto}
     .avatar{display:grid;place-items:center;background:#e5e7eb;color:#374151;font-weight:700;font-size:32px}
     .debug{font-size:.85rem;color:#9ca3af;margin-top:8px}
-    .controls{display:grid;grid-template-columns:1fr;gap:12px;align-items:end}
+    .controls{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end}
+    .inline{display:inline-flex;gap:8px;align-items:center;margin:8px 0}
+    .hint{font-size:.85rem;color:#6b7280;margin-top:4px}
   </style>
 
   <!-- Lector de QR -->
@@ -32,7 +34,7 @@
       doc, getDoc
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-    // ⚙️ Tu configuración de Firebase
+    // ⚙️ Tu configuración de Firebase (según la que me diste)
     const firebaseConfig = {
       apiKey: "AIzaSyAvf7Ioww9AhOVLoGzfi5I5PUwlhLE3gfM",
       authDomain: "holy-trinity-mass-attendance.firebaseapp.com",
@@ -66,6 +68,7 @@
     window.addEventListener('DOMContentLoaded', async () => {
       const teacherEl = document.getElementById('teacher');
       const courseEl  = document.getElementById('course');
+      const frontCamEl = document.getElementById('frontCam');
       const camSel = document.getElementById('cameraSel');
       const refreshBtn = document.getElementById('refreshCams');
 
@@ -83,21 +86,19 @@
 
       let html5QrCode = null;
       let running = false;
-      let currentDeviceId = null;
-      let camerasCache = [];
 
       async function listCameras(){
         try{
           const cams = await Html5Qrcode.getCameras();
-          camerasCache = cams || [];
           camSel.innerHTML = '<option value="">(Seleccionar automáticamente)</option>';
-          camerasCache.forEach((c, idx) => {
+          cams.forEach((c, idx) => {
             const opt = document.createElement('option');
             opt.value = c.id;
             opt.textContent = c.label || `Cámara ${idx+1}`;
             camSel.appendChild(opt);
           });
-        }catch{
+        }catch(e){
+          // Puede fallar si el navegador no otorgó permiso aún
           camSel.innerHTML = '<option value="">(Seleccionar automáticamente)</option>';
         }
       }
@@ -110,55 +111,64 @@
         statusEl.textContent = 'Iniciando cámara...';
 
         try{
-          if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
-          if (running) { await html5QrCode.stop(); await html5QrCode.clear(); running = false; }
-
-          // Actualiza listado tras permisos
-          try { camerasCache = await Html5Qrcode.getCameras(); } catch {}
+          html5QrCode = new Html5Qrcode("reader");
 
           const selectedDeviceId = camSel.value || null;
-
-          // Estrategia:
-          // 1) Si el usuario eligió en el selector, usar ese deviceId.
-          // 2) Si no, intentar facingMode: environment; si falla, elegir por etiqueta back/rear/environment.
-          let startArg = null;
+          const wantFront = frontCamEl.checked;
 
           if (selectedDeviceId) {
-            currentDeviceId = selectedDeviceId;
-            startArg = currentDeviceId;
+            // Si el usuario seleccionó una cámara específica, úsala
+            await html5QrCode.start(
+              selectedDeviceId,
+              { fps: 10, qrbox: { width: 280, height: 280 } },
+              onScanSuccess,
+              () => {}
+            );
           } else {
-            const constraints = { facingMode: { ideal: "environment" } };
+            // Si no seleccionó, usar facingMode (y fallback a enumeración)
+            const constraints = { facingMode: wantFront ? "user" : "environment" };
             try {
               await html5QrCode.start(
-                constraints, { fps: 10, qrbox: { width: 280, height: 280 } }, onScanSuccess, () => {}
+                constraints,
+                { fps: 10, qrbox: { width: 280, height: 280 } },
+                onScanSuccess,
+                () => {}
               );
-              running = true;
-              statusEl.textContent = 'Escaneando...';
-              startBtn.disabled = true; stopBtn.disabled = false;
-              return;
-            } catch (e) {
-              if (camerasCache?.length) {
-                let chosen = camerasCache[0].id;
-                const rear = camerasCache.find(c =>
-                  (c.label || '').toLowerCase().includes('back') ||
-                  (c.label || '').toLowerCase().includes('rear') ||
-                  (c.label || '').toLowerCase().includes('environment')
+            } catch (err1) {
+              const devices = await Html5Qrcode.getCameras();
+              if (!devices?.length) throw new Error('No se encontró cámara');
+
+              // Heurística: intenta encontrar la que diga front/back según checkbox
+              let deviceId = devices[0].id;
+              if (wantFront) {
+                const front = devices.find(d =>
+                  (d.label || '').toLowerCase().includes('front') ||
+                  (d.label || '').toLowerCase().includes('face')
                 );
-                chosen = rear ? rear.id : camerasCache[0].id;
-                currentDeviceId = chosen;
-                startArg = currentDeviceId;
+                if (front) deviceId = front.id;
+                else if (devices.length > 1) deviceId = devices[devices.length - 1].id;
               } else {
-                throw e;
+                const rear = devices.find(d =>
+                  (d.label || '').toLowerCase().includes('back') ||
+                  (d.label || '').toLowerCase().includes('rear') ||
+                  (d.label || '').toLowerCase().includes('environment')
+                );
+                if (rear) deviceId = rear.id;
               }
+
+              await html5QrCode.start(
+                deviceId,
+                { fps: 10, qrbox: { width: 280, height: 280 } },
+                onScanSuccess,
+                () => {}
+              );
             }
           }
 
-          await html5QrCode.start(
-            startArg, { fps: 10, qrbox: { width: 280, height: 280 } }, onScanSuccess, () => {}
-          );
           running = true;
-          statusEl.textContent = 'Escaneando...';
-          startBtn.disabled = true; stopBtn.disabled = false;
+          statusEl.textContent = 'Escaneando... apunta al QR del estudiante';
+          startBtn.disabled = true;
+          stopBtn.disabled  = false;
         }catch(err){
           statusEl.innerHTML = `<span class="err">Error al iniciar: ${err.message}</span>`;
         }
@@ -279,6 +289,14 @@ DocID: ${docRef.id}`;
             <option value="">(Seleccionar automáticamente)</option>
           </select>
           <button id="refreshCams" type="button" style="margin-top:8px">Actualizar cámaras</button>
+          <div class="hint">Si los nombres aparecen en blanco, inicia una vez el escaneo para otorgar permiso y vuelve a “Actualizar cámaras”.</div>
+        </div>
+        <div>
+          <label class="inline">
+            <input type="checkbox" id="frontCam">
+            Usar cámara frontal (si no eliges una cámara arriba)
+          </label>
+          <div class="hint">Para cambiar de cámara durante la sesión, presiona <b>Detener</b> y luego <b>Iniciar</b> con la nueva selección.</div>
         </div>
       </div>
 
