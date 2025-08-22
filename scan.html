@@ -28,8 +28,8 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
     import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
     import {
-      getFirestore, collection, addDoc, serverTimestamp,
-      doc, getDoc
+      getFirestore, collection, serverTimestamp,
+      doc, getDoc, setDoc
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
     // ⚙️ Tu configuración de Firebase
@@ -66,8 +66,8 @@
     window.addEventListener('DOMContentLoaded', async () => {
       const teacherEl = document.getElementById('teacher');
       const courseEl  = document.getElementById('course');
-      const camSel = document.getElementById('cameraSel');
-      const refreshBtn = document.getElementById('refreshCams');
+      const camSel    = document.getElementById('cameraSel');
+      const refreshBtn= document.getElementById('refreshCams');
 
       const startBtn  = document.getElementById('start');
       const stopBtn   = document.getElementById('stop');
@@ -118,7 +118,6 @@
 
           const selectedDeviceId = camSel.value || null;
 
-          // Estrategia:
           // 1) Si el usuario eligió en el selector, usar ese deviceId.
           // 2) Si no, intentar facingMode: environment; si falla, elegir por etiqueta back/rear/environment.
           let startArg = null;
@@ -175,6 +174,15 @@
         }
       }
 
+      // Helpers para fecha
+      function buildTodayKey(){
+        const d = new Date();
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth()+1).padStart(2,'0');
+        const dd = String(d.getDate()).padStart(2,'0');
+        return `${yyyy}-${mm}-${dd}`;
+      }
+
       async function onScanSuccess(decodedText){
         try{
           // 1) Decodificar QR
@@ -186,7 +194,7 @@
 
           debugEl.textContent = `QR leído: ${decodedText}`;
 
-          // 2) Buscar perfil en Firestore
+          // 2) Buscar perfil en Firestore (students/{sid})
           let profile = null; let profileMsg = '';
           try{
             const snap = await getDoc(doc(db, "students", sid));
@@ -230,22 +238,39 @@
             avatarEl.style.display = "grid";
           }
 
-          // 4) Guardar asistencia
-          const docRef = await addDoc(collection(db, "attendance"), {
+          // 4) Guardar asistencia con docId = sid en ruta por día: attendanceByDate/{date}/entries/{sid}
+          const dateKey = buildTodayKey();
+          const attRef  = doc(db, "attendanceByDate", dateKey, "entries", sid);
+          const exists  = await getDoc(attRef);
+
+          if (exists.exists()) {
+            statusEl.innerHTML = `<span class="ok">Ya estaba registrado hoy (${dateKey}).</span>`;
+            lastEl.textContent =
+`⏭️ Duplicado evitado
+Alumno: ${displayName} (${sid})
+Fecha: ${dateKey}`;
+            debugEl.textContent = `${profileMsg}${usedFallback ? ' | Foto fallback: '+photoUrl : (photoUrl ? ' | Foto encontrada' : ' | Sin foto')}`;
+            return;
+          }
+
+          await setDoc(attRef, {
             sid,
             name: displayName || "",
             org: displayOrg || "",
             photoUrl: photoUrl || "",
             teacher, course,
+            dateKey,
             scannedAt: serverTimestamp()
           });
 
           lastEl.textContent =
 `✔️ Registrado: ${displayName} (${sid})
 Profesor: ${teacher}${course ? " | Curso: "+course : ""}
-DocID: ${docRef.id}`;
+Fecha: ${dateKey}
+DocID: ${sid}`;
           statusEl.innerHTML = `<span class="ok">Asistencia guardada</span>`;
           debugEl.textContent = `${profileMsg}${usedFallback ? ' | Foto fallback: '+photoUrl : (photoUrl ? ' | Foto encontrada' : ' | Sin foto')}`;
+
         }catch(err){
           statusEl.innerHTML = `<span class="err">Error: ${err.message}</span>`;
         }
