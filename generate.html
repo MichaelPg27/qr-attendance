@@ -21,33 +21,30 @@
     <div class="row">
       <div>
         <label for="sid">ID del estudiante</label>
-        <input id="sid" placeholder="p.ej. STU12345" />
+        <input id="sid" placeholder="p.ej. 1001" />
       </div>
       <div>
         <label for="name">Nombre Completo</label>
         <input id="name" placeholder="p.ej. Ana Pérez" />
       </div>
     </div>
-
-    <!-- Campo Catequista -->
     <label for="course">Catequista (opcional)</label>
     <input id="course" placeholder="p.ej. Catequista María" />
-
     <button id="gen">Generar QR</button>
     <div id="qr"></div>
-    <p class="muted">El QR contiene un JSON como: {"sid":"STU123","name":"Ana Pérez","course":"Catequista María"}</p>
+    <p class="muted">El QR contiene un JSON como: {"sid":"1001","name":"Ana Pérez","course":"Catequista María"}</p>
     <button id="download" style="display:none">Descargar PNG</button>
   </div>
 
-  <!-- Librería QR -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <!-- QRCode library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
-  <!-- Firebase + Firestore -->
+  <!-- Firebase -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
     import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-    // ⚙️ CONFIG DE TU PROYECTO
+    // ⚙️ Configuración Firebase
     const firebaseConfig = {
       apiKey: "AIzaSyAvf7Ioww9AhOVLoGzfi5I5PUwlhLE3gfM",
       authDomain: "holy-trinity-mass-attendance.firebaseapp.com",
@@ -61,20 +58,6 @@
     const app = initializeApp(firebaseConfig);
     const db  = getFirestore(app);
 
-    // Guardar estudiante en Firestore
-    async function saveStudent(sid, name, course) {
-      try {
-        await setDoc(doc(db, "students", sid), {
-          name: name,
-          course: course,
-          photoUrl: "" // puedes llenarlo después si quieres fotos
-        });
-        console.log("✅ Estudiante guardado en Firestore:", sid);
-      } catch (e) {
-        console.error("❌ Error guardando estudiante:", e);
-      }
-    }
-
     const btn = document.getElementById('gen');
     const downloadBtn = document.getElementById('download');
     let lastCanvas = null;
@@ -85,20 +68,23 @@
       const course = document.getElementById('course').value.trim();
       if(!sid || !name){ alert('Completa ID y Nombre'); return; }
 
-      // 1️⃣ Guardar en Firestore
-      await saveStudent(sid, name, course);
+      // Guardar en Firestore en colección "students"
+      try {
+        await setDoc(doc(db, "students", sid), {
+          name,
+          course
+        });
+        console.log("✅ Estudiante guardado:", sid);
+      } catch (e) {
+        console.error("❌ Error guardando estudiante:", e);
+      }
 
-      // 2️⃣ Generar QR
+      // Crear QR
       const payload = JSON.stringify({ sid, name, course });
-      const payloadUtf8 = unescape(encodeURIComponent(payload)); // fuerza UTF-8
-
       const qrDiv = document.getElementById('qr');
       qrDiv.innerHTML = '';
       const qr = new QRCode(qrDiv, {
-        text: payloadUtf8,
-        width: 256,
-        height: 256,
-        correctLevel: QRCode.CorrectLevel.M
+        text: payload, width: 256, height: 256, correctLevel: QRCode.CorrectLevel.M
       });
 
       setTimeout(() => {
@@ -108,7 +94,6 @@
       }, 200);
     });
 
-    // Descargar PNG
     downloadBtn.addEventListener('click', () => {
       const canvas = lastCanvas;
       const link = document.createElement('a');
