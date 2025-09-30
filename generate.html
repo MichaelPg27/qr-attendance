@@ -29,33 +29,68 @@
       </div>
     </div>
 
-    <!-- Solo cambia el texto y placeholder; se mantiene id="course" -->
+    <!-- Campo Catequista -->
     <label for="course">Catequista (opcional)</label>
     <input id="course" placeholder="p.ej. Catequista María" />
 
     <button id="gen">Generar QR</button>
     <div id="qr"></div>
-    <p class="muted">El QR contiene un JSON como: {"sid":"STU123","name":"Ana","course":"Catequista María"}</p>
+    <p class="muted">El QR contiene un JSON como: {"sid":"STU123","name":"Ana Pérez","course":"Catequista María"}</p>
     <button id="download" style="display:none">Descargar PNG</button>
   </div>
 
-  <!-- QRCode library -->
+  <!-- Librería QR -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script>
+
+  <!-- Firebase + Firestore -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    // ⚙️ CONFIG DE TU PROYECTO
+    const firebaseConfig = {
+      apiKey: "AIzaSyAvf7Ioww9AhOVLoGzfi5I5PUwlhLE3gfM",
+      authDomain: "holy-trinity-mass-attendance.firebaseapp.com",
+      projectId: "holy-trinity-mass-attendance",
+      storageBucket: "holy-trinity-mass-attendance.firebasestorage.app",
+      messagingSenderId: "433652965400",
+      appId: "1:433652965400:web:a5a79fc0c06a64fe6f636d",
+      measurementId: "G-QT30TYNQ83"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+
+    // Guardar estudiante en Firestore
+    async function saveStudent(sid, name, course) {
+      try {
+        await setDoc(doc(db, "students", sid), {
+          name: name,
+          course: course,
+          photoUrl: "" // puedes llenarlo después si quieres fotos
+        });
+        console.log("✅ Estudiante guardado en Firestore:", sid);
+      } catch (e) {
+        console.error("❌ Error guardando estudiante:", e);
+      }
+    }
+
     const btn = document.getElementById('gen');
     const downloadBtn = document.getElementById('download');
     let lastCanvas = null;
 
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const sid = document.getElementById('sid').value.trim();
       const name = document.getElementById('name').value.trim();
       const course = document.getElementById('course').value.trim();
       if(!sid || !name){ alert('Completa ID y Nombre'); return; }
 
-      // --- UTF-8 FIX para qrcodejs 1.0.0 ---
+      // 1️⃣ Guardar en Firestore
+      await saveStudent(sid, name, course);
+
+      // 2️⃣ Generar QR
       const payload = JSON.stringify({ sid, name, course });
       const payloadUtf8 = unescape(encodeURIComponent(payload)); // fuerza UTF-8
-      // -------------------------------------
 
       const qrDiv = document.getElementById('qr');
       qrDiv.innerHTML = '';
@@ -73,6 +108,7 @@
       }, 200);
     });
 
+    // Descargar PNG
     downloadBtn.addEventListener('click', () => {
       const canvas = lastCanvas;
       const link = document.createElement('a');
