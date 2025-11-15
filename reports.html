@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Reportes de Asistencia</title>
+  <style>
+    body{font-family:system-ui,Arial;margin:24px;background:#f7f7f8;color:#111}
+    .wrap{max-width:1100px;margin:auto;display:grid;gap:16px}
+    .card{background:#fff;padding:16px;border-radius:16px;box-shadow:0 10px 25px rgba(0,0,0,.08)}
+    label{display:block;margin:8px 0 4px;font-weight:600}
+    input,button{padding:10px;border:1px solid #ddd;border-radius:10px}
+    input{width:100%}
+    .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:8px;border-bottom:1px solid #eee;text-align:left}
+    th{background:#f1f5f9}
+    .muted{color:#6b7280}
+    .tag{font:12px ui-monospace;color:#6b7280}
+  </style>
+  <!-- SheetJS para Excel -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import {
+      getFirestore, collection, getDocs, query, where
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    // ⚙️ MISMA CONFIG QUE EN scan.html
+    const firebaseConfig = {
+      apiKey: "AIzaSyAvf7Ioww9AhOVLoGzfi5I5PUwlhLE3gfM",
+      authDomain: "holy-trinity-mass-attendance.firebaseapp.com",
+      projectId: "holy-trinity-mass-attendance",
+      storageBucket: "holy-trinity-mass-attendance.firebasestorage.app",
+      messagingSenderId: "433652965400",
+      appId: "1:433652965400:web:a5a79fc0c06a64fe6f636d",
+      measurementId: "G-QT30TYNQ83"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+
+    // ===== Helpers =====
+    function fmtDateNY(d){
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone:'America/New_York', year:'numeric', month:'2-digit', day:'2-digit'
+      }).format(d); // YYYY-MM-DD
+    }
+    function* daysBetweenNY(d1,d2){
+      const start = new Date(d1.getFullYear(),d1.getMonth(),d1.getDate());
+      const end   = new Date(d2.getFullYear(),d2.getMonth(),d2.getDate());
+      for(let d=start; d<=end; d.setDate(d.getDate()+1)) yield fmtDateNY(d);
+    }
+    function tsToLocal(ts){
+      if(!ts) return "";
+      try{
+        if(ts.toDate) return ts.toDate().toLocaleString();
+        if(typeof ts.seconds==="number") return new Date(ts.seconds*1000).toLocaleString();
+      }catch{}
+      return "";
+    }
+
+    let lastRows = [];
+
+    async function fetchDay(dateKey, courseFilter){
+      const rows = [];
+      // A) Colección nueva: attendanceByDate/{dateKey}/entries
+      try{
+        const col = collection(db, "attendanceByDate", dateKey, "entries");
+        const snap = await getDocs(col);
+        snap.forEach(docSnap=>{
+          const v = docSnap.data();
+          rows.push({
+            Fecha: dateKey,
+            SID: v.sid || docSnap.id,
+            Nombre: v.name || "",
+            "Catequista": v.course || "",               // antes "Curso"
+            "Nombre del Encargado": v.teacher || "",    // antes "Profesor"
+            "Hora (local)": tsToLocal(v.scannedAt),
+            Foto: v.photoUrl || ""
+          });
+        });
+      }catch(e){
+        status(`Error leyendo attendanceByDate/${dateKey}: ${e.message}`);
+      }
+
+      // B) Colección legado: attendance con campo dateKey=={dateKey}
+      try{
+        const legacy = query(collection(db, "attendance"), where("dateKey", "==", dateKey));
+        const legacySnap = await getDocs(legacy);
+        legacySnap.forEach(docSnap=>{
+          const v = docSnap.data();
+          rows.push({
+            Fecha: v.dateKey || dateKey,
+            SID: v.sid || docSnap.id,
+            Nombre: v.name || "",
+            "Catequista": v.course || "",
+            "Nombre del Encargado": v.teacher || "",
+            "Hora (local)": tsToLocal(v.scannedAt),
+            Foto: v.photoUrl || ""
+          });
+        });
+      }catch(e){
+        // Ignorar si no existe la colección legado
+      }
+
+      // Filtro por Catequista (opcional) — se mantiene id="course"
+      if(courseFilter){
+        const cf = courseFilter.trim().toLowerCase();
+        return rows.filter(r => (r["Catequista"] || "").toLowerCase().includes(cf));
+      }
+      return rows;
+    }
+
+    async function loadReport(){
+      const start = document.getElementById('start').value;
+      const end   = document.getElementById('end').value;
+      const courseFilter = (document.getElementById('course').value || "");
+
+      if(!start || !end){ alert("Selecciona fecha inicio y fin"); return; }
+      const d1 = new Date(start); const d2 = new Date(end);
+      if(d2 < d1){ alert("La fecha fin no puede ser menor que la de inicio"); return; }
+
+      status("Cargando...");
+      let all = [];
+      for(const dateKey of daysBetweenNY(d1,d2)){
+        const rows = await fetchDay(dateKey, courseFilter);
+        all = all.concat(rows);
+      }
+      // Ordenar
+      all.sort((a,b)=>{
+        if(a.Fecha!==b.Fecha) return a.Fecha.localeCompare(b.Fecha);
+        if(a["Hora (local)"]!==b["Hora (local)"]) return (a["Hora (local)"]||"").localeCompare(b["Hora (local)"]||"");
+        return (a.Nombre||"").localeCompare(b.Nombre||"");
+      });
+
+      lastRows = all;
+      renderTable(all);
+      status(`Listo. Registros: ${all.length}`);
+    }
+
+    function renderTable(rows){
+      const tbody = document.querySelector('#tbl tbody');
+      tbody.innerHTML = "";
+      if(rows.length===0){
+        tbody.innerHTML = `<tr><td colspan="7" class="muted">Sin registros</td></tr>`;
+        return;
+      }
+      for(const r of rows){
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${r.Fecha}</td>
+          <td>${r.SID}</td>
+          <td>${r.Nombre}</td>
+          <td>${r["Catequista"]}</td>
+          <td>${r["Nombre del Encargado"]}</td>
+          <td>${r["Hora (local)"]}</td>
+          <td>${r.Foto ? `<a href="${r.Foto}" target="_blank">ver</a>` : ""}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function downloadExcel(){
+      if(!lastRows.length){ alert("No hay datos para exportar"); return; }
+      const ws = XLSX.utils.json_to_sheet(lastRows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Asistencia");
+      const start = document.getElementById('start').value || 'inicio';
+      const end   = document.getElementById('end').value || 'fin';
+      XLSX.writeFile(wb, `asistencia_${start}_a_${end}.xlsx`);
+    }
+
+    function status(msg){ document.getElementById('status').textContent = msg; }
+
+    window.addEventListener('DOMContentLoaded', ()=>{
+      // Prefill HOY (America/New_York) y carga automática
+      const todayNY = new Intl.DateTimeFormat('en-CA', {
+        timeZone:'America/New_York', year:'numeric', month:'2-digit', day:'2-digit'
+      }).format(new Date());
+      document.getElementById('start').value = todayNY;
+      document.getElementById('end').value = todayNY;
+
+      document.getElementById('btnLoad').addEventListener('click', loadReport);
+      document.getElementById('btnExcel').addEventListener('click', downloadExcel);
+      document.getElementById('btnToday').addEventListener('click', ()=>{
+        const t = new Intl.DateTimeFormat('en-CA', {
+          timeZone:'America/New_York', year:'numeric', month:'2-digit', day:'2-digit'
+        }).format(new Date());
+        document.getElementById('start').value = t;
+        document.getElementById('end').value = t;
+        loadReport();
+      });
+
+      // Carga HOY al abrir
+      loadReport();
+    });
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Reportes de Asistencia</h1>
+      <div class="tag">build: reports 2025-08-21.4 (encabezados ajustados)</div>
+      <div class="grid">
+        <div>
+          <label>Desde</label>
+          <input id="start" type="date"/>
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input id="end" type="date"/>
+        </div>
+        <div>
+          <label>Catequista (opcional)</label>
+          <input id="course" placeholder="p.ej. Catequista María"/>
+        </div>
+        <div class="actions" style="align-items:end">
+          <button id="btnLoad"  type="button">Ver datos</button>
+          <button id="btnToday" type="button">Hoy</button>
+          <button id="btnExcel" type="button">Descargar Excel</button>
+        </div>
+      </div>
+      <div id="status" class="muted" style="margin-top:8px">—</div>
+    </div>
+
+    <div class="card">
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>SID</th>
+            <th>Nombre</th>
+            <th>Catequista</th>
+            <th>Nombre del Encargado</th>
+            <th>Hora (local)</th>
+            <th>Foto</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="7" class="muted">Sin resultados</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

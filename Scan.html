@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Escanear Asistencia</title>
+  <style>
+    body{font-family:system-ui,Arial;margin:24px;background:#f7f7f8;color:#111}
+    .wrap{max-width:900px;margin:auto;display:grid;gap:16px}
+    .card{background:#fff;padding:16px;border-radius:16px;box-shadow:0 10px 25px rgba(0,0,0,.08)}
+    label{display:block;margin:10px 0 6px;font-weight:600}
+    input,select{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px}
+    button{padding:10px 14px;border:0;border-radius:12px;cursor:pointer;box-shadow:0 6px 15px rgba(0,0,0,.08)}
+    .row{display:grid;grid-template-columns:1fr;gap:16px}
+    .log{font-family:ui-monospace,Consolas;background:#0b1220;color:#e6edf3;padding:12px;border-radius:12px;white-space:pre-wrap}
+    .ok{color:#4caf50} .err{color:#e53935} .muted{color:#6b7280}
+    .student{display:flex;gap:14px;align-items:center}
+    .avatar,.photo{width:96px;height:96px;border-radius:50%;object-fit:cover;flex:0 0 auto}
+    .avatar{display:grid;place-items:center;background:#e5e7eb;color:#374151;font-weight:700;font-size:32px}
+    .debug{font-size:.85rem;color:#9ca3af;margin-top:8px}
+    #loginSection { text-align:center; margin-top:60px; }
+    #scannerSection { display:none; }
+
+    /* Styled Google button */
+    .google-btn {
+      background-color: #4285F4;
+      color: white;
+      font-weight: 600;
+      border-radius: 6px;
+      border: none;
+      padding: 10px 18px;
+      cursor: pointer;
+      font-size: 1rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,.2);
+    }
+    .google-btn img { width: 20px; height: 20px; }
+  </style>
+
+  <!-- ✅ QR reader -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+  <!-- ✅ Firebase core + Auth + Firestore -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import { getFirestore, serverTimestamp, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    // ⚙️ Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyAvf7Ioww9AhOVLoGzfi5I5PUwlhLE3gfM",
+      authDomain: "holy-trinity-mass-attendance.firebaseapp.com",
+      projectId: "holy-trinity-mass-attendance",
+      storageBucket: "holy-trinity-mass-attendance.firebasestorage.app",
+      messagingSenderId: "433652965400",
+      appId: "1:433652965400:web:a5a79fc0c06a64fe6f636d",
+      measurementId: "G-QT30TYNQ83"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
+
+    const loginSection = document.getElementById("loginSection");
+    const scannerSection = document.getElementById("scannerSection");
+
+    window.googleLogin = () => {
+      signInWithPopup(auth, provider)
+        .then(result => {
+          const user = result.user;
+          alert(`Welcome ${user.displayName}`);
+          loginSection.style.display = "none";
+          scannerSection.style.display = "block";
+        })
+        .catch(error => {
+          console.error(error);
+          alert("Login failed: " + error.message);
+        });
+    };
+
+    window.googleLogout = () => {
+      signOut(auth).then(() => {
+        alert("Logged out");
+        loginSection.style.display = "block";
+        scannerSection.style.display = "none";
+      });
+    };
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        loginSection.style.display = "none";
+        scannerSection.style.display = "block";
+      } else {
+        loginSection.style.display = "block";
+        scannerSection.style.display = "none";
+      }
+    });
+
+    // ✅ QR Scanner Logic
+    window.addEventListener('DOMContentLoaded', async () => {
+      const Html5Qrcode = window.Html5Qrcode;
+      const teacherEl   = document.getElementById('teacher');
+      const camSel      = document.getElementById('cameraSel');
+      const refreshBtn  = document.getElementById('refreshCams');
+      const startBtn    = document.getElementById('start');
+      const stopBtn     = document.getElementById('stop');
+      const statusEl    = document.getElementById('status');
+      const lastEl      = document.getElementById('last');
+      const photoEl     = document.getElementById('photo');
+      const avatarEl    = document.getElementById('avatar');
+      const snameEl     = document.getElementById('sname');
+      const ssidEl      = document.getElementById('ssid');
+
+      let html5QrCode = null;
+      let running = false;
+      let camerasCache = [];
+
+      async function listCameras(){
+        try{
+          const cams = await Html5Qrcode.getCameras();
+          camerasCache = cams || [];
+          camSel.innerHTML = '<option value="">(Seleccionar automáticamente)</option>';
+          camerasCache.forEach((c, idx) => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.label || `Cámara ${idx+1}`;
+            camSel.appendChild(opt);
+          });
+        }catch{
+          camSel.innerHTML = '<option value="">(Seleccionar automáticamente)</option>';
+        }
+      }
+      await listCameras();
+      refreshBtn.addEventListener('click', listCameras);
+
+      async function startScan(){
+        const teacher = teacherEl.value.trim();
+        if(!teacher){ alert('Ingresa el nombre del encargado'); return; }
+        statusEl.textContent = 'Iniciando cámara...';
+
+        try{
+          if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
+          if (running) { await html5QrCode.stop(); await html5QrCode.clear(); running = false; }
+
+          const selectedDeviceId = camSel.value || null;
+          if (selectedDeviceId) {
+            await html5QrCode.start(selectedDeviceId,{fps:10,qrbox:{width:280,height:280}},onScanSuccess,()=>{});
+          } else {
+            await html5QrCode.start({facingMode:{ideal:"environment"}},{fps:10,qrbox:{width:280,height:280}},onScanSuccess,()=>{});
+          }
+
+          running = true;
+          statusEl.textContent = 'Escaneando...';
+          startBtn.disabled = true; stopBtn.disabled = false;
+        }catch(err){
+          statusEl.innerHTML = `<span class="err">Error al iniciar: ${err.message}</span>`;
+        }
+      }
+
+      async function stopScan(){
+        if(html5QrCode && running){
+          await html5QrCode.stop();
+          await html5QrCode.clear();
+          running = false;
+          startBtn.disabled = false;
+          stopBtn.disabled  = true;
+          statusEl.textContent = 'Escaneo detenido.';
+        }
+      }
+
+      function buildTodayKey(){
+        return new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+      }
+
+      async function tryImageUrls(urls){
+        return new Promise((resolve)=>{
+          const img = new Image();
+          let i = 0;
+          const tryNext = ()=>{
+            if(i >= urls.length){ resolve({ ok:false }); return; }
+            const url = urls[i++];
+            img.onload = ()=> resolve({ ok:true, url });
+            img.onerror = tryNext;
+            img.src = url;
+          };
+          tryNext();
+        });
+      }
+
+      async function registerAttendanceById(sid){
+        try{
+          const snap = await getDoc(doc(db,"students",sid));
+          let profile = snap.exists()?snap.data():{};
+          const teacher = teacherEl.value.trim();
+          const displayName = String(profile?.name || sid).trim();
+          const displayCourse = String(profile?.course || "").trim();
+          let photoUrl = String(profile?.photoUrl || "").trim();
+          if (!photoUrl){
+            const base = 'https://michaelpg27.github.io/qr-attendance/fotos/';
+            const candidates = [base+sid+'.png', base+sid+'.jpg', base+sid+'.jpeg'];
+            const res = await tryImageUrls(candidates);
+            if(res.ok) photoUrl = res.url;
+          }
+          snameEl.textContent  = displayName;
+          ssidEl.textContent   = sid;
+          if (photoUrl){
+            photoEl.src = photoUrl;
+            photoEl.style.display = "block";
+            avatarEl.style.display = "none";
+          } else {
+            photoEl.style.display = "none";
+            avatarEl.textContent = (displayName||sid||'?').charAt(0).toUpperCase() || '?';
+            avatarEl.style.display = "grid";
+          }
+
+          const dateKey = buildTodayKey();
+          const attRef  = doc(db,"attendanceByDate",dateKey,"entries",sid);
+          const exists = await getDoc(attRef);
+          if (exists.exists()) {
+            statusEl.innerHTML = `<span class="ok">Ya estaba registrado hoy (${dateKey}).</span>`;
+            return;
+          }
+
+          await setDoc(attRef,{
+            sid,name:displayName,course:displayCourse,photoUrl,teacher,
+            dateKey,scannedAt:serverTimestamp()
+          });
+
+          lastEl.textContent = `✔️ Registrado: ${displayName} (${sid})
+Encargado: ${teacher}
+Curso: ${displayCourse || "—"}
+Fecha: ${dateKey}`;
+          statusEl.innerHTML = `<span class="ok">Asistencia guardada</span>`;
+        }catch(err){
+          statusEl.innerHTML = `<span class="err">Error manual: ${err.message}</span>`;
+        }
+      }
+
+      async function onScanSuccess(decodedText){
+        let data;
+        try{ data = JSON.parse(decodedText); } catch { data = { sid: decodedText }; }
+        const sid = String((data.sid ?? "")).trim();
+        if (!sid){ statusEl.innerHTML = `<span class="err">QR inválido: falta sid</span>`; return; }
+        await registerAttendanceById(sid);
+      }
+
+      startBtn.addEventListener('click', startScan);
+      stopBtn.addEventListener('click', stopScan);
+      document.getElementById('manualBtn').addEventListener('click', ()=>{
+        const sid = document.getElementById('manualSid').value.trim();
+        if(!sid){ alert("Ingresa un ID de estudiante"); return; }
+        registerAttendanceById(sid);
+      });
+    });
+  </script>
+</head>
+
+<body>
+  <!-- 🔐 Google Login Section -->
+  <div id="loginSection">
+    <h2>Holy Trinity Attendance</h2>
+    <p>Please sign in with your Google account to continue.</p>
+    <button class="google-btn" onclick="googleLogin()">
+      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="G">
+      Sign in with Google
+    </button>
+  </div>
+
+  <!-- 📷 Scanner Section (hidden until login) -->
+  <div id="scannerSection">
+    <div style="text-align:right"><button onclick="googleLogout()">Log out</button></div>
+    <div class="wrap">
+      <div class="card">
+        <h1>Escanear Asistencia</h1>
+        <div>
+          <label for="teacher">Nombre del encargado</label>
+          <input id="teacher" placeholder="Ej. Javier López" />
+        </div>
+        <div>
+          <label for="cameraSel">Cámara</label>
+          <select id="cameraSel"><option value="">(Seleccionar automáticamente)</option></select>
+          <button id="refreshCams" type="button" style="margin-top:8px">Actualizar cámaras</button>
+        </div>
+        <div id="reader" style="width:100%;max-width:460px;aspect-ratio:1/1;border-radius:16px;overflow:hidden;margin:14px auto;background:#000"></div>
+        <div style="display:flex;gap:10px;justify-content:center">
+          <button id="start">Iniciar escaneo</button>
+          <button id="stop" disabled>Detener</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Registro Manual</h2>
+        <label for="manualSid">ID del estudiante</label>
+        <input id="manualSid" placeholder="Ej. 1004" />
+        <button id="manualBtn">Registrar asistencia</button>
+      </div>
+
+      <div class="card">
+        <h2>Estudiante</h2>
+        <div class="student">
+          <img id="photo" class="photo" alt="Foto del estudiante" style="display:none" />
+          <div id="avatar" class="avatar">?</div>
+          <div>
+            <div id="sname" style="font-weight:700;font-size:1.1rem">—</div>
+            <div id="ssid" class="muted">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Estado</h2>
+        <div id="status" class="log">Listo para escanear.</div>
+        <h2>Último registro</h2>
+        <div id="last" class="log">—</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
